@@ -14,6 +14,19 @@ export async function startRecallBot(meetingUrl: string) {
         meeting_url: meetingUrl,
         bot_name: "Sherlocks",
         platform: "google_meet",
+        events: ["audio_mixed_raw.data"],
+        recording_config: {
+          audio_mixed_raw: {
+            enabled: true,
+          },
+          realtime_endpoints: [
+            {
+              type: "websocket",
+              url: " wss://9b3905f12a98.ngrok-free.app",
+              events: ["audio_mixed_raw.data"],
+            },
+          ],
+        },
       },
       {
         headers: {
@@ -24,11 +37,17 @@ export async function startRecallBot(meetingUrl: string) {
       }
     );
 
-    const { participant_id, audio_url } = response.data;
-    console.log(` Bot joined! ID: ${participant_id}`);
-    console.log(` Audio stream URL: ${audio_url}`);
+    const { id, meeting_url } = response.data;
+    console.log("✅ Bot joined!");
+    console.log("bot_id:", id);
+    console.log("meeting:", meeting_url);
+    console.log("🔍 Full Recall API response:", response.data);
 
-    return { participantId: participant_id, audioUrl: audio_url };
+    // Audio stream will be provided via the websocket endpoint configured above
+    return {
+      botId: id,
+      meetingInfo: meeting_url,
+    };
   } catch (error: any) {
     console.error(
       " Failed to start bot:",
