@@ -22,7 +22,7 @@ export async function startRecallBot(meetingUrl: string) {
           realtime_endpoints: [
             {
               type: "websocket",
-              url: " wss://9b3905f12a98.ngrok-free.app",
+              url: "wss://07064e3ea1d0.ngrok-free.app",
               events: ["audio_mixed_raw.data"],
             },
           ],

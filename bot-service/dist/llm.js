@@ -8,29 +8,26 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.askLLM = askLLM;
-const openai_1 = require("openai");
-const dotenv_1 = __importDefault(require("dotenv"));
-dotenv_1.default.config();
-const openai = new openai_1.OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+/**
+ * Dummy LLM that responds to specific keywords
+ * This is a simple implementation that listens for "hello" and responds appropriately
+ */
 function askLLM(transcript) {
     return __awaiter(this, void 0, void 0, function* () {
-        const res = yield openai.chat.completions.create({
-            model: "gpt-4",
-            messages: [
-                {
-                    role: "system",
-                    content: "You are a helpful assistant inside a Google Meet call.",
-                },
-                { role: "user", content: transcript },
-            ],
-        });
-        const reply = res.choices[0].message.content;
-        console.log(" LLM:", reply);
-        return reply;
+        // Convert transcript to lowercase for case-insensitive matching
+        const normalizedTranscript = transcript.toLowerCase().trim();
+        console.log("🎧 Processing transcript:", transcript);
+        // Check if the transcript contains "hello"
+        if (normalizedTranscript.includes("hello")) {
+            const reply = "hi I am sherlocks how can I help you";
+            console.log("🤖 LLM Response:", reply);
+            return reply;
+        }
+        // For now, we'll only respond to "hello"
+        // You can add more trigger words and responses here
+        console.log("🤐 No response triggered for this transcript");
+        return null;
     });
 }

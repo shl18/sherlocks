@@ -1,22 +1,22 @@
-import { OpenAI } from "openai";
-import dotenv from "dotenv";
-dotenv.config();
+/**
+ * Dummy LLM that responds to specific keywords
+ * This is a simple implementation that listens for "hello" and responds appropriately
+ */
+export async function askLLM(transcript: string): Promise<string | null> {
+  // Convert transcript to lowercase for case-insensitive matching
+  const normalizedTranscript = transcript.toLowerCase().trim();
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
+  console.log("🎧 Processing transcript:", transcript);
 
-export async function askLLM(transcript: string) {
-  const res = await openai.chat.completions.create({
-    model: "gpt-4",
-    messages: [
-      {
-        role: "system",
-        content: "You are a helpful assistant inside a Google Meet call.",
-      },
-      { role: "user", content: transcript },
-    ],
-  });
+  // Check if the transcript contains "hello"
+  if (normalizedTranscript.includes("hello")) {
+    const reply = "hi I am sherlocks how can I help you";
+    console.log("🤖 LLM Response:", reply);
+    return reply;
+  }
 
-  const reply = res.choices[0].message.content;
-  console.log(" LLM:", reply);
-  return reply;
+  // For now, we'll only respond to "hello"
+  // You can add more trigger words and responses here
+  console.log("🤐 No response triggered for this transcript");
+  return null;
 }
