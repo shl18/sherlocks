@@ -19,28 +19,104 @@ const fluent_ffmpeg_1 = __importDefault(require("fluent-ffmpeg"));
 const dotenv_1 = __importDefault(require("dotenv"));
 dotenv_1.default.config();
 const deepgramClient = (0, sdk_1.createClient)(process.env.DEEPGRAM_API_KEY);
+const conversationContext = {
+    recentIntents: [],
+    lastResponseTime: 0,
+};
+const MAX_INTENT_HISTORY = 5; // Keep track of last 5 intents
+const MIN_RESPONSE_INTERVAL = 2000; // Minimum 2 seconds between responses
+const SAME_INTENT_COOLDOWN = 6000; // Allow same intent after 6 seconds
+function detectIntent(normalizedTranscript) {
+    if (normalizedTranscript.includes("hello") ||
+        normalizedTranscript.includes("hi") ||
+        normalizedTranscript.includes("hey") ||
+        normalizedTranscript.includes("how are you doing") ||
+        normalizedTranscript.includes("whats up")) {
+        return "greeting";
+    }
+    if (normalizedTranscript.includes("who are you") ||
+        normalizedTranscript.includes("what u do") ||
+        normalizedTranscript.includes("what is this")) {
+        return "identity";
+    }
+    return null;
+}
 /**
- * Dummy LLM that responds to specific keywords
- * This is a simple implementation that listens for "hello" and responds appropriately
+ * Check if we should respond based on conversation context
+ */
+function shouldRespond(intent) {
+    const now = Date.now();
+    // Check if enough time has passed since last response (minimum interval)
+    if (now - conversationContext.lastResponseTime < MIN_RESPONSE_INTERVAL) {
+        console.log("🔇 Skipping response - too soon after last response");
+        return false;
+    }
+    // Check if this intent was the most recent one
+    const lastIntent = conversationContext.recentIntents[conversationContext.recentIntents.length - 1];
+    if (lastIntent === intent) {
+        // Same intent - check if enough time has passed for repeat
+        const timeSinceLastResponse = now - conversationContext.lastResponseTime;
+        if (timeSinceLastResponse < SAME_INTENT_COOLDOWN) {
+            console.log(`🔇 Skipping response - same intent "${intent}" within ${SAME_INTENT_COOLDOWN / 1000}s cooldown`);
+            return false;
+        }
+        else {
+            console.log(`✅ Allowing repeat response - same intent "${intent}" after ${timeSinceLastResponse / 1000}s`);
+        }
+    }
+    return true;
+}
+/**
+ * Update conversation context with new intent
+ */
+function updateConversationContext(intent) {
+    conversationContext.recentIntents.push(intent);
+    // Keep only the most recent intents
+    if (conversationContext.recentIntents.length > MAX_INTENT_HISTORY) {
+        conversationContext.recentIntents = conversationContext.recentIntents.slice(-MAX_INTENT_HISTORY);
+    }
+    conversationContext.lastResponseTime = Date.now();
+    console.log("💭 Updated conversation context. Recent intents:", conversationContext.recentIntents);
+}
+/**
+ * Dummy LLM that responds to specific keywords with conversation context awareness
+ * This implementation tracks recent intents and avoids duplicate consecutive responses
  */
 function askLLM(transcript) {
     return __awaiter(this, void 0, void 0, function* () {
         // Convert transcript to lowercase for case-insensitive matching
         const normalizedTranscript = transcript.toLowerCase().trim();
         console.log("🎧 Processing transcript:", transcript);
-        // Check if the transcript contains "hello"
-        if (normalizedTranscript.includes("hello") ||
-            normalizedTranscript.includes("hi") ||
-            normalizedTranscript.includes("hey") ||
-            normalizedTranscript.includes("how are you") ||
-            normalizedTranscript.includes("how are you doing")) {
-            const reply = "`hey i am sherlocks`";
+        // Detect the intent from the transcript
+        const intent = detectIntent(normalizedTranscript);
+        if (!intent) {
+            console.log("🤐 No intent detected for this transcript");
+            return null;
+        }
+        console.log("🎯 Detected intent:", intent);
+        // Check if we should respond based on conversation context
+        if (!shouldRespond(intent)) {
+            return null;
+        }
+        // Generate response based on intent
+        let reply = null;
+        switch (intent) {
+            case "greeting":
+                reply = "hey i am sherlocks";
+                break;
+            case "identity":
+                reply = "i am a bot that can help you with your questions";
+                break;
+            default:
+                console.log("🤐 No response defined for intent:", intent);
+                return null;
+        }
+        if (reply) {
+            // Update conversation context
+            updateConversationContext(intent);
             console.log("🤖 LLM Response:", reply);
             return reply;
         }
-        // For now, we'll only respond to "hello"
-        // You can add more trigger words and responses here
-        console.log("🤐 No response triggered for this transcript");
         return null;
     });
 }
@@ -118,11 +194,9 @@ function convertWavToMp3(wavBuffer) {
                 const startTime = Date.now();
                 const mp3Chunks = [];
                 const { Readable, PassThrough } = require("stream");
-                // Create readable stream from WAV buffer
                 const inputStream = new Readable();
                 inputStream.push(wavBuffer);
                 inputStream.push(null); // End stream
-                // Create output stream to collect MP3 data
                 const outputStream = new PassThrough();
                 // Create ffmpeg command with streaming
                 const command = (0, fluent_ffmpeg_1.default)(inputStream)

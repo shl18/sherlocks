@@ -1,39 +1,140 @@
 import { createClient } from "@deepgram/sdk";
 import ffmpeg from "fluent-ffmpeg";
-import fs from "fs";
-import path from "path";
-import { promisify } from "util";
 import dotenv from "dotenv";
 dotenv.config();
 
 const deepgramClient = createClient(process.env.DEEPGRAM_API_KEY);
 
-/**
- * Dummy LLM that responds to specific keywords
- * This is a simple implementation that listens for "hello" and responds appropriately
- */
-export async function askLLM(transcript: string): Promise<string | null> {
-  // Convert transcript to lowercase for case-insensitive matching
-  const normalizedTranscript = transcript.toLowerCase().trim();
+interface ConversationContext {
+  recentIntents: string[];
+  lastResponseTime: number;
+}
 
-  console.log("🎧 Processing transcript:", transcript);
+const conversationContext: ConversationContext = {
+  recentIntents: [],
+  lastResponseTime: 0,
+};
 
-  // Check if the transcript contains "hello"
+const MAX_INTENT_HISTORY = 5; // Keep track of last 5 intents
+const MIN_RESPONSE_INTERVAL = 2000; // Minimum 2 seconds between responses
+const SAME_INTENT_COOLDOWN = 6000; // Allow same intent after 6 seconds
+
+function detectIntent(normalizedTranscript: string): string | null {
   if (
     normalizedTranscript.includes("hello") ||
     normalizedTranscript.includes("hi") ||
     normalizedTranscript.includes("hey") ||
-    normalizedTranscript.includes("how are you") ||
-    normalizedTranscript.includes("how are you doing")
+    normalizedTranscript.includes("how are you doing") ||
+    normalizedTranscript.includes("whats up")
   ) {
-    const reply = "`hey i am sherlocks`";
+    return "greeting";
+  }
+
+  if (
+    normalizedTranscript.includes("who are you") ||
+    normalizedTranscript.includes("what u do") ||
+    normalizedTranscript.includes("what is this")
+  ) {
+    return "identity";
+  }
+
+  return null;
+}
+
+//Check if we should respond based on conversation context
+function shouldRespond(intent: string): boolean {
+  const now = Date.now();
+
+  // Check if enough time has passed since last response (minimum interval)
+  if (now - conversationContext.lastResponseTime < MIN_RESPONSE_INTERVAL) {
+    console.log("🔇 Skipping response - too soon after last response");
+    return false;
+  }
+
+  // Check if this intent was the most recent one
+  const lastIntent =
+    conversationContext.recentIntents[
+      conversationContext.recentIntents.length - 1
+    ];
+
+  if (lastIntent === intent) {
+    // Same intent - check if enough time has passed for repeat
+    const timeSinceLastResponse = now - conversationContext.lastResponseTime;
+    if (timeSinceLastResponse < SAME_INTENT_COOLDOWN) {
+      console.log(
+        `🔇 Skipping response - same intent "${intent}" within ${
+          SAME_INTENT_COOLDOWN / 1000
+        }s cooldown`
+      );
+      return false;
+    } else {
+      console.log(
+        `✅ Allowing repeat response - same intent "${intent}" after ${
+          timeSinceLastResponse / 1000
+        }s`
+      );
+    }
+  }
+
+  return true;
+}
+
+/**
+ * Update conversation context with new intent
+ */
+function updateConversationContext(intent: string) {
+  conversationContext.recentIntents.push(intent);
+
+  // Keep only the most recent intents
+  if (conversationContext.recentIntents.length > MAX_INTENT_HISTORY) {
+    conversationContext.recentIntents = conversationContext.recentIntents.slice(
+      -MAX_INTENT_HISTORY
+    );
+  }
+
+  conversationContext.lastResponseTime = Date.now();
+  console.log(
+    "💭 Updated conversation context. Recent intents:",
+    conversationContext.recentIntents
+  );
+}
+
+export async function askLLM(transcript: string): Promise<string | null> {
+  const normalizedTranscript = transcript.toLowerCase().trim();
+  console.log("🎧 Processing transcript:", transcript);
+  const intent = detectIntent(normalizedTranscript);
+
+  if (!intent) {
+    console.log("🤐 No intent detected for this transcript");
+    return null;
+  }
+
+  console.log("🎯 Detected intent:", intent);
+
+  if (!shouldRespond(intent)) {
+    return null;
+  }
+
+  let reply: string | null = null;
+
+  switch (intent) {
+    case "greeting":
+      reply = "hey i am sherlocks";
+      break;
+    case "identity":
+      reply = "i am a bot that can help you with your questions";
+      break;
+    default:
+      console.log("🤐 No response defined for intent:", intent);
+      return null;
+  }
+
+  if (reply) {
+    updateConversationContext(intent);
     console.log("🤖 LLM Response:", reply);
     return reply;
   }
 
-  // For now, we'll only respond to "hello"
-  // You can add more trigger words and responses here
-  console.log("🤐 No response triggered for this transcript");
   return null;
 }
 
@@ -63,29 +164,20 @@ export async function textToSpeech(text: string): Promise<Buffer | null> {
     if (stream) {
       // Convert stream to WAV buffer
       const wavBuffer = await getAudioBuffer(stream);
-      console.log(
-        "✅ Text-to-speech WAV conversion successful, buffer size:",
-        wavBuffer.length
-      );
-
       // Convert WAV to MP3
       const mp3Buffer = await convertWavToMp3(wavBuffer);
       if (mp3Buffer) {
-        console.log(
-          "✅ WAV to MP3 conversion successful, MP3 buffer size:",
-          mp3Buffer.length
-        );
         return mp3Buffer;
       } else {
-        console.error("❌ Failed to convert WAV to MP3");
+        console.error("Failed to convert WAV to MP3");
         return null;
       }
     } else {
-      console.error("❌ Failed to get audio stream from Deepgram TTS");
+      console.error(" Failed to get audio stream from Deepgram TTS");
       return null;
     }
   } catch (error) {
-    console.error("❌ Text-to-speech error:", error);
+    console.error("Text-to-speech error:", error);
     return null;
   }
 }
@@ -127,12 +219,10 @@ async function convertWavToMp3(wavBuffer: Buffer): Promise<Buffer | null> {
       const mp3Chunks: Buffer[] = [];
       const { Readable, PassThrough } = require("stream");
 
-      // Create readable stream from WAV buffer
       const inputStream = new Readable();
       inputStream.push(wavBuffer);
       inputStream.push(null); // End stream
 
-      // Create output stream to collect MP3 data
       const outputStream = new PassThrough();
 
       // Create ffmpeg command with streaming
