@@ -16,6 +16,7 @@ const ws_1 = __importDefault(require("ws"));
 const fs_1 = __importDefault(require("fs"));
 const sdk_1 = require("@deepgram/sdk");
 const llm_1 = require("./llm");
+const recall_1 = require("./recall");
 const deepgramClient = (0, sdk_1.createClient)(process.env.DEEPGRAM_API_KEY);
 const wss = new ws_1.default.Server({ port: 3456 });
 wss.on("connection", (ws) => {
@@ -92,6 +93,28 @@ wss.on("connection", (ws) => {
                 const reply = yield (0, llm_1.askLLM)(transcript);
                 if (reply) {
                     console.log("🤖 LLM Reply:", reply);
+                    // Convert LLM response to speech
+                    console.log("🔊 Converting LLM response to speech...");
+                    const audioBuffer = yield (0, llm_1.textToSpeech)(reply);
+                    if (audioBuffer) {
+                        console.log("🎵 Audio buffer size:", audioBuffer.length, "bytes");
+                        // Send TTS audio to the bot to speak in the call
+                        const success = yield (0, recall_1.sendAudioToBot)(audioBuffer);
+                        if (success) {
+                            console.log("🗣️ Bot will now speak the response in the call!");
+                        }
+                        else {
+                            console.log("❌ Failed to send audio to bot");
+                            // Fallback: save to file for debugging
+                            const timestamp = Date.now();
+                            const audioPath = `/tmp/sherlocks_response_${timestamp}.wav`;
+                            fs_1.default.writeFileSync(audioPath, audioBuffer);
+                            console.log("💾 Audio saved as fallback to:", audioPath);
+                        }
+                    }
+                    else {
+                        console.log("❌ Failed to convert LLM response to speech");
+                    }
                 }
                 else {
                     console.log("🤖 LLM: No response generated");
@@ -116,6 +139,28 @@ wss.on("connection", (ws) => {
                 const reply = yield (0, llm_1.askLLM)(transcript);
                 if (reply) {
                     console.log("🤖 Fallback LLM Reply:", reply);
+                    // Convert LLM response to speech
+                    console.log("🔊 Converting fallback LLM response to speech...");
+                    const audioBuffer = yield (0, llm_1.textToSpeech)(reply);
+                    if (audioBuffer) {
+                        console.log("🎵 Fallback audio buffer size:", audioBuffer.length, "bytes");
+                        // Send TTS audio to the bot to speak in the call
+                        const success = yield (0, recall_1.sendAudioToBot)(audioBuffer);
+                        if (success) {
+                            console.log("🗣️ Bot will now speak the fallback response in the call!");
+                        }
+                        else {
+                            console.log("❌ Failed to send fallback audio to bot");
+                            // Fallback: save to file for debugging
+                            const timestamp = Date.now();
+                            const audioPath = `/tmp/sherlocks_fallback_response_${timestamp}.wav`;
+                            fs_1.default.writeFileSync(audioPath, audioBuffer);
+                            console.log("💾 Fallback audio saved to:", audioPath);
+                        }
+                    }
+                    else {
+                        console.log("❌ Failed to convert fallback LLM response to speech");
+                    }
                 }
                 else {
                     console.log("🤖 Fallback LLM: No response generated");

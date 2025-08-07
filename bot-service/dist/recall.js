@@ -13,11 +13,15 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.startRecallBot = startRecallBot;
+exports.sendAudioToBot = sendAudioToBot;
+exports.getCurrentBotId = getCurrentBotId;
 const axios_1 = __importDefault(require("axios"));
 const dotenv_1 = __importDefault(require("dotenv"));
 dotenv_1.default.config();
 const RECALL_API_KEY = process.env.RECALL_API_KEY;
 const RECALL_API_URL = "https://us-west-2.recall.ai/api/v1/bot/";
+// Store bot ID for audio output
+let currentBotId = null;
 function startRecallBot(meetingUrl) {
     return __awaiter(this, void 0, void 0, function* () {
         var _a;
@@ -34,10 +38,14 @@ function startRecallBot(meetingUrl) {
                     realtime_endpoints: [
                         {
                             type: "websocket",
-                            url: "wss://07064e3ea1d0.ngrok-free.app",
+                            url: "wss://39c3f58300b6.ngrok-free.app",
                             events: ["audio_mixed_raw.data"],
                         },
                     ],
+                },
+                // Enable bot audio output capabilities at the top level
+                output_media: {
+                    enabled: true,
                 },
             }, {
                 headers: {
@@ -47,6 +55,7 @@ function startRecallBot(meetingUrl) {
                 },
             });
             const { id, meeting_url } = response.data;
+            currentBotId = id; // Store bot ID for audio output
             console.log("✅ Bot joined!");
             console.log("bot_id:", id);
             console.log("meeting:", meeting_url);
@@ -62,4 +71,64 @@ function startRecallBot(meetingUrl) {
             throw error;
         }
     });
+}
+/**
+ * Send audio data to the bot to speak in the call
+ * @param audioBuffer - The audio buffer to send (should be base64 encoded)
+ */
+function sendAudioToBot(audioBuffer) {
+    return __awaiter(this, void 0, void 0, function* () {
+        var _a, _b, _c;
+        if (!currentBotId) {
+            console.error("❌ No bot ID available for audio output");
+            return false;
+        }
+        try {
+            console.log("🎤 Sending audio to bot for speech output...");
+            console.log("🔍 Bot ID:", currentBotId);
+            console.log("🔍 Audio buffer size:", audioBuffer.length);
+            // Convert buffer to base64
+            const base64Audio = audioBuffer.toString("base64");
+            console.log("🔍 Base64 audio length:", base64Audio.length);
+            // Try the correct API endpoint for bot audio output
+            const url = `${RECALL_API_URL}${currentBotId}/output_audio/`;
+            console.log("🔍 API URL:", url);
+            const payload = {
+                kind: "wav",
+                b64_data: base64Audio,
+            };
+            console.log("🔍 Payload structure:", {
+                kind: payload.kind,
+                b64_data_length: payload.b64_data.length,
+            });
+            const response = yield axios_1.default.post(url, payload, {
+                headers: {
+                    accept: "application/json",
+                    "content-type": "application/json",
+                    Authorization: `Token ${RECALL_API_KEY}`,
+                },
+                timeout: 10000, // 10 second timeout
+            });
+            console.log("✅ Audio sent to bot successfully!");
+            console.log("🔍 Response status:", response.status);
+            console.log("🔍 Response headers:", response.headers);
+            console.log("🔍 Bot audio response:", response.data);
+            return true;
+        }
+        catch (error) {
+            console.error("❌ Failed to send audio to bot:");
+            console.error("❌ Error status:", (_a = error.response) === null || _a === void 0 ? void 0 : _a.status);
+            console.error("❌ Error headers:", (_b = error.response) === null || _b === void 0 ? void 0 : _b.headers);
+            console.error("❌ Error data:", (_c = error.response) === null || _c === void 0 ? void 0 : _c.data);
+            console.error("❌ Error message:", error.message);
+            console.error("❌ Full error:", error);
+            return false;
+        }
+    });
+}
+/**
+ * Get the current bot ID
+ */
+function getCurrentBotId() {
+    return currentBotId;
 }

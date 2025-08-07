@@ -1,7 +1,8 @@
 import WebSocket from "ws";
 import fs from "fs";
 import { createClient } from "@deepgram/sdk";
-import { askLLM } from "./llm";
+import { askLLM, textToSpeech } from "./llm";
+import { sendAudioToBot } from "./recall";
 
 type AudioDataEvent = {
   event: "audio_mixed_raw.data";
@@ -124,6 +125,31 @@ wss.on("connection", (ws) => {
         const reply = await askLLM(transcript);
         if (reply) {
           console.log("🤖 LLM Reply:", reply);
+
+          // Convert LLM response to speech
+          console.log("🔊 Converting LLM response to speech...");
+          const audioBuffer = await textToSpeech(reply);
+
+          if (audioBuffer) {
+            console.log("🎵 Audio buffer size:", audioBuffer.length, "bytes");
+
+            // Send TTS audio to the bot to speak in the call
+            const success = await sendAudioToBot(audioBuffer);
+
+            if (success) {
+              console.log("🗣️ Bot will now speak the response in the call!");
+            } else {
+              console.log("❌ Failed to send audio to bot");
+
+              // Fallback: save to file for debugging
+              const timestamp = Date.now();
+              const audioPath = `/tmp/sherlocks_response_${timestamp}.wav`;
+              fs.writeFileSync(audioPath, audioBuffer);
+              console.log("💾 Audio saved as fallback to:", audioPath);
+            }
+          } else {
+            console.log("❌ Failed to convert LLM response to speech");
+          }
         } else {
           console.log("🤖 LLM: No response generated");
         }
@@ -145,6 +171,37 @@ wss.on("connection", (ws) => {
         const reply = await askLLM(transcript);
         if (reply) {
           console.log("🤖 Fallback LLM Reply:", reply);
+
+          // Convert LLM response to speech
+          console.log("🔊 Converting fallback LLM response to speech...");
+          const audioBuffer = await textToSpeech(reply);
+
+          if (audioBuffer) {
+            console.log(
+              "🎵 Fallback audio buffer size:",
+              audioBuffer.length,
+              "bytes"
+            );
+
+            // Send TTS audio to the bot to speak in the call
+            const success = await sendAudioToBot(audioBuffer);
+
+            if (success) {
+              console.log(
+                "🗣️ Bot will now speak the fallback response in the call!"
+              );
+            } else {
+              console.log("❌ Failed to send fallback audio to bot");
+
+              // Fallback: save to file for debugging
+              const timestamp = Date.now();
+              const audioPath = `/tmp/sherlocks_fallback_response_${timestamp}.wav`;
+              fs.writeFileSync(audioPath, audioBuffer);
+              console.log("💾 Fallback audio saved to:", audioPath);
+            }
+          } else {
+            console.log("❌ Failed to convert fallback LLM response to speech");
+          }
         } else {
           console.log("🤖 Fallback LLM: No response generated");
         }
