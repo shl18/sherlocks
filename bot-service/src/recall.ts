@@ -25,14 +25,22 @@ export async function startRecallBot(meetingUrl: string) {
           realtime_endpoints: [
             {
               type: "websocket",
-              url: "wss://39c3f58300b6.ngrok-free.app",
+              url: "wss://e316ccfbe339.ngrok-free.app",
               events: ["audio_mixed_raw.data"],
             },
           ],
         },
-        // Enable bot audio output capabilities at the top level
+        // Enable bot audio output capabilities
         output_media: {
           enabled: true,
+        },
+        automatic_audio_output: {
+          in_call_recording: {
+            data: {
+              kind: "mp3",
+              b64_data: "base64_data",
+            },
+          },
         },
       },
       {
@@ -84,12 +92,12 @@ export async function sendAudioToBot(audioBuffer: Buffer): Promise<boolean> {
     const base64Audio = audioBuffer.toString("base64");
     console.log("🔍 Base64 audio length:", base64Audio.length);
 
-    // Try the correct API endpoint for bot audio output
+    // Send audio to the dedicated output_audio endpoint
     const url = `${RECALL_API_URL}${currentBotId}/output_audio/`;
     console.log("🔍 API URL:", url);
 
     const payload = {
-      kind: "wav",
+      kind: "mp3",
       b64_data: base64Audio,
     };
 

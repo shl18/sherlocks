@@ -15,6 +15,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.askLLM = askLLM;
 exports.textToSpeech = textToSpeech;
 const sdk_1 = require("@deepgram/sdk");
+const fluent_ffmpeg_1 = __importDefault(require("fluent-ffmpeg"));
 const dotenv_1 = __importDefault(require("dotenv"));
 dotenv_1.default.config();
 const deepgramClient = (0, sdk_1.createClient)(process.env.DEEPGRAM_API_KEY);
@@ -44,28 +45,37 @@ function askLLM(transcript) {
     });
 }
 /**
- * Convert text to speech using Deepgram TTS API
+ * Convert text to speech using Deepgram TTS API and convert to MP3
  * @param text - The text to convert to speech
- * @returns Audio buffer containing the generated speech
+ * @returns MP3 audio buffer containing the generated speech
  */
 function textToSpeech(text) {
     return __awaiter(this, void 0, void 0, function* () {
         try {
             console.log("🔊 Converting text to speech:", text);
-            // Make TTS request to Deepgram
+            // Make TTS request to Deepgram (generate WAV)
             const response = yield deepgramClient.speak.request({ text }, {
                 model: "aura-2-thalia-en", // Use a natural-sounding voice
                 encoding: "linear16",
-                container: "wav",
+                container: "wav", // Deepgram supports WAV
                 sample_rate: 16000, // Match the audio format expected by Recall AI
             });
             // Get the audio stream from the response
             const stream = yield response.getStream();
             if (stream) {
-                // Convert stream to buffer
-                const audioBuffer = yield getAudioBuffer(stream);
-                console.log("✅ Text-to-speech conversion successful, audio buffer size:", audioBuffer.length);
-                return audioBuffer;
+                // Convert stream to WAV buffer
+                const wavBuffer = yield getAudioBuffer(stream);
+                console.log("✅ Text-to-speech WAV conversion successful, buffer size:", wavBuffer.length);
+                // Convert WAV to MP3
+                const mp3Buffer = yield convertWavToMp3(wavBuffer);
+                if (mp3Buffer) {
+                    console.log("✅ WAV to MP3 conversion successful, MP3 buffer size:", mp3Buffer.length);
+                    return mp3Buffer;
+                }
+                else {
+                    console.error("❌ Failed to convert WAV to MP3");
+                    return null;
+                }
             }
             else {
                 console.error("❌ Failed to get audio stream from Deepgram TTS");
@@ -93,5 +103,63 @@ function getAudioBuffer(response) {
         }
         const dataArray = chunks.reduce((acc, chunk) => Uint8Array.from([...acc, ...chunk]), new Uint8Array(0));
         return Buffer.from(dataArray.buffer);
+    });
+}
+/**
+ * Convert WAV buffer to MP3 buffer using streaming ffmpeg (much faster - no temp files!)
+ * @param wavBuffer - The WAV audio buffer to convert
+ * @returns MP3 audio buffer
+ */
+function convertWavToMp3(wavBuffer) {
+    return __awaiter(this, void 0, void 0, function* () {
+        return new Promise((resolve) => {
+            try {
+                console.log("🎵 Starting streaming WAV→MP3 conversion...");
+                const startTime = Date.now();
+                const mp3Chunks = [];
+                const { Readable, PassThrough } = require("stream");
+                // Create readable stream from WAV buffer
+                const inputStream = new Readable();
+                inputStream.push(wavBuffer);
+                inputStream.push(null); // End stream
+                // Create output stream to collect MP3 data
+                const outputStream = new PassThrough();
+                // Create ffmpeg command with streaming
+                const command = (0, fluent_ffmpeg_1.default)(inputStream)
+                    .inputFormat("wav")
+                    .audioCodec("libmp3lame")
+                    .audioBitrate(64) // Lower bitrate for faster conversion
+                    .audioFrequency(16000)
+                    .format("mp3")
+                    .on("start", (commandLine) => {
+                    console.log("🔄 FFmpeg streaming command:", commandLine.substring(0, 100) + "...");
+                })
+                    .on("end", () => {
+                    const duration = Date.now() - startTime;
+                    console.log(`✅ Streaming conversion complete in ${duration}ms`);
+                    const finalMp3Buffer = Buffer.concat(mp3Chunks);
+                    console.log(`🎵 MP3 buffer size: ${finalMp3Buffer.length} bytes`);
+                    resolve(finalMp3Buffer);
+                })
+                    .on("error", (error) => {
+                    console.error("❌ Streaming FFmpeg error:", error);
+                    resolve(null);
+                });
+                // Collect output chunks
+                outputStream.on("data", (chunk) => {
+                    mp3Chunks.push(chunk);
+                });
+                outputStream.on("error", (error) => {
+                    console.error("❌ Output stream error:", error);
+                    resolve(null);
+                });
+                // Pipe ffmpeg output to our collector
+                command.pipe(outputStream, { end: true });
+            }
+            catch (error) {
+                console.error("❌ Streaming conversion setup error:", error);
+                resolve(null);
+            }
+        });
     });
 }

@@ -143,7 +143,7 @@ wss.on("connection", (ws) => {
 
               // Fallback: save to file for debugging
               const timestamp = Date.now();
-              const audioPath = `/tmp/sherlocks_response_${timestamp}.wav`;
+              const audioPath = `/tmp/sherlocks_response_${timestamp}.mp3`;
               fs.writeFileSync(audioPath, audioBuffer);
               console.log("💾 Audio saved as fallback to:", audioPath);
             }
@@ -195,7 +195,7 @@ wss.on("connection", (ws) => {
 
               // Fallback: save to file for debugging
               const timestamp = Date.now();
-              const audioPath = `/tmp/sherlocks_fallback_response_${timestamp}.wav`;
+              const audioPath = `/tmp/sherlocks_fallback_response_${timestamp}.mp3`;
               fs.writeFileSync(audioPath, audioBuffer);
               console.log("💾 Fallback audio saved to:", audioPath);
             }

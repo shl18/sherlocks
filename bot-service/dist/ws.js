@@ -107,7 +107,7 @@ wss.on("connection", (ws) => {
                             console.log("❌ Failed to send audio to bot");
                             // Fallback: save to file for debugging
                             const timestamp = Date.now();
-                            const audioPath = `/tmp/sherlocks_response_${timestamp}.wav`;
+                            const audioPath = `/tmp/sherlocks_response_${timestamp}.mp3`;
                             fs_1.default.writeFileSync(audioPath, audioBuffer);
                             console.log("💾 Audio saved as fallback to:", audioPath);
                         }
@@ -153,7 +153,7 @@ wss.on("connection", (ws) => {
                             console.log("❌ Failed to send fallback audio to bot");
                             // Fallback: save to file for debugging
                             const timestamp = Date.now();
-                            const audioPath = `/tmp/sherlocks_fallback_response_${timestamp}.wav`;
+                            const audioPath = `/tmp/sherlocks_fallback_response_${timestamp}.mp3`;
                             fs_1.default.writeFileSync(audioPath, audioBuffer);
                             console.log("💾 Fallback audio saved to:", audioPath);
                         }
