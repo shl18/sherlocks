@@ -13,10 +13,10 @@ const recall_1 = require("./recall");
 require("./ws");
 function main() {
     return __awaiter(this, void 0, void 0, function* () {
-        const meetingUrl = "https://meet.google.com/xom-jpuq-htt";
+        const meetingUrl = "https://meet.google.com/vji-wwvm-kkd";
         const { botId } = yield (0, recall_1.startRecallBot)(meetingUrl);
         if (!botId) {
-            console.log("❌ Failed to start bot");
+            console.log(" Failed to start bot");
             return;
         }
         console.log(" WebSocket server is running and ready to receive audio...");

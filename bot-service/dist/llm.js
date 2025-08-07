@@ -23,9 +23,9 @@ const conversationContext = {
     recentIntents: [],
     lastResponseTime: 0,
 };
-const MAX_INTENT_HISTORY = 5; // Keep track of last 5 intents
-const MIN_RESPONSE_INTERVAL = 2000; // Minimum 2 seconds between responses
-const SAME_INTENT_COOLDOWN = 6000; // Allow same intent after 6 seconds
+const MAX_INTENT_HISTORY = 5;
+const MIN_RESPONSE_INTERVAL = 2000;
+const SAME_INTENT_COOLDOWN = 6000;
 function detectIntent(normalizedTranscript) {
     if (normalizedTranscript.includes("hello") ||
         normalizedTranscript.includes("hi") ||
@@ -41,9 +41,7 @@ function detectIntent(normalizedTranscript) {
     }
     return null;
 }
-/**
- * Check if we should respond based on conversation context
- */
+//Check if we should respond based on conversation context
 function shouldRespond(intent) {
     const now = Date.now();
     // Check if enough time has passed since last response (minimum interval)
@@ -76,29 +74,21 @@ function updateConversationContext(intent) {
         conversationContext.recentIntents = conversationContext.recentIntents.slice(-MAX_INTENT_HISTORY);
     }
     conversationContext.lastResponseTime = Date.now();
-    console.log("💭 Updated conversation context. Recent intents:", conversationContext.recentIntents);
+    console.log("Updated conversation context. Recent intents:", conversationContext.recentIntents);
 }
-/**
- * Dummy LLM that responds to specific keywords with conversation context awareness
- * This implementation tracks recent intents and avoids duplicate consecutive responses
- */
 function askLLM(transcript) {
     return __awaiter(this, void 0, void 0, function* () {
-        // Convert transcript to lowercase for case-insensitive matching
         const normalizedTranscript = transcript.toLowerCase().trim();
         console.log("🎧 Processing transcript:", transcript);
-        // Detect the intent from the transcript
         const intent = detectIntent(normalizedTranscript);
         if (!intent) {
-            console.log("🤐 No intent detected for this transcript");
+            console.log("No intent detected for this transcript");
             return null;
         }
-        console.log("🎯 Detected intent:", intent);
-        // Check if we should respond based on conversation context
+        console.log("Detected intent:", intent);
         if (!shouldRespond(intent)) {
             return null;
         }
-        // Generate response based on intent
         let reply = null;
         switch (intent) {
             case "greeting":
@@ -108,13 +98,12 @@ function askLLM(transcript) {
                 reply = "i am a bot that can help you with your questions";
                 break;
             default:
-                console.log("🤐 No response defined for intent:", intent);
+                console.log("No response defined for intent:", intent);
                 return null;
         }
         if (reply) {
-            // Update conversation context
             updateConversationContext(intent);
-            console.log("🤖 LLM Response:", reply);
+            console.log("LLM Response:", reply);
             return reply;
         }
         return null;
@@ -131,35 +120,30 @@ function textToSpeech(text) {
             console.log("🔊 Converting text to speech:", text);
             // Make TTS request to Deepgram (generate WAV)
             const response = yield deepgramClient.speak.request({ text }, {
-                model: "aura-2-thalia-en", // Use a natural-sounding voice
+                model: "aura-2-thalia-en",
                 encoding: "linear16",
-                container: "wav", // Deepgram supports WAV
-                sample_rate: 16000, // Match the audio format expected by Recall AI
+                container: "wav",
+                sample_rate: 16000,
             });
-            // Get the audio stream from the response
             const stream = yield response.getStream();
             if (stream) {
-                // Convert stream to WAV buffer
                 const wavBuffer = yield getAudioBuffer(stream);
-                console.log("✅ Text-to-speech WAV conversion successful, buffer size:", wavBuffer.length);
-                // Convert WAV to MP3
                 const mp3Buffer = yield convertWavToMp3(wavBuffer);
                 if (mp3Buffer) {
-                    console.log("✅ WAV to MP3 conversion successful, MP3 buffer size:", mp3Buffer.length);
                     return mp3Buffer;
                 }
                 else {
-                    console.error("❌ Failed to convert WAV to MP3");
+                    console.error("Failed to convert WAV to MP3");
                     return null;
                 }
             }
             else {
-                console.error("❌ Failed to get audio stream from Deepgram TTS");
+                console.error(" Failed to get audio stream from Deepgram TTS");
                 return null;
             }
         }
         catch (error) {
-            console.error("❌ Text-to-speech error:", error);
+            console.error("Text-to-speech error:", error);
             return null;
         }
     });
@@ -196,13 +180,12 @@ function convertWavToMp3(wavBuffer) {
                 const { Readable, PassThrough } = require("stream");
                 const inputStream = new Readable();
                 inputStream.push(wavBuffer);
-                inputStream.push(null); // End stream
+                inputStream.push(null);
                 const outputStream = new PassThrough();
-                // Create ffmpeg command with streaming
                 const command = (0, fluent_ffmpeg_1.default)(inputStream)
                     .inputFormat("wav")
                     .audioCodec("libmp3lame")
-                    .audioBitrate(64) // Lower bitrate for faster conversion
+                    .audioBitrate(64)
                     .audioFrequency(16000)
                     .format("mp3")
                     .on("start", (commandLine) => {
@@ -219,7 +202,6 @@ function convertWavToMp3(wavBuffer) {
                     console.error("❌ Streaming FFmpeg error:", error);
                     resolve(null);
                 });
-                // Collect output chunks
                 outputStream.on("data", (chunk) => {
                     mp3Chunks.push(chunk);
                 });
@@ -227,7 +209,6 @@ function convertWavToMp3(wavBuffer) {
                     console.error("❌ Output stream error:", error);
                     resolve(null);
                 });
-                // Pipe ffmpeg output to our collector
                 command.pipe(outputStream, { end: true });
             }
             catch (error) {

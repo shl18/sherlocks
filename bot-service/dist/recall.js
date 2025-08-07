@@ -38,7 +38,7 @@ function startRecallBot(meetingUrl) {
                     realtime_endpoints: [
                         {
                             type: "websocket",
-                            url: "wss://8c78f0495a9b.ngrok-free.app ",
+                            url: "wss://6fad6a2e0355.ngrok-free.app",
                             events: ["audio_mixed_raw.data"],
                         },
                     ],

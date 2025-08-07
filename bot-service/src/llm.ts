@@ -15,9 +15,9 @@ const conversationContext: ConversationContext = {
   lastResponseTime: 0,
 };
 
-const MAX_INTENT_HISTORY = 5; // Keep track of last 5 intents
-const MIN_RESPONSE_INTERVAL = 2000; // Minimum 2 seconds between responses
-const SAME_INTENT_COOLDOWN = 6000; // Allow same intent after 6 seconds
+const MAX_INTENT_HISTORY = 5;
+const MIN_RESPONSE_INTERVAL = 2000;
+const SAME_INTENT_COOLDOWN = 6000;
 
 function detectIntent(normalizedTranscript: string): string | null {
   if (
@@ -94,7 +94,7 @@ function updateConversationContext(intent: string) {
 
   conversationContext.lastResponseTime = Date.now();
   console.log(
-    "💭 Updated conversation context. Recent intents:",
+    "Updated conversation context. Recent intents:",
     conversationContext.recentIntents
   );
 }
@@ -105,11 +105,11 @@ export async function askLLM(transcript: string): Promise<string | null> {
   const intent = detectIntent(normalizedTranscript);
 
   if (!intent) {
-    console.log("🤐 No intent detected for this transcript");
+    console.log("No intent detected for this transcript");
     return null;
   }
 
-  console.log("🎯 Detected intent:", intent);
+  console.log("Detected intent:", intent);
 
   if (!shouldRespond(intent)) {
     return null;
@@ -125,13 +125,13 @@ export async function askLLM(transcript: string): Promise<string | null> {
       reply = "i am a bot that can help you with your questions";
       break;
     default:
-      console.log("🤐 No response defined for intent:", intent);
+      console.log("No response defined for intent:", intent);
       return null;
   }
 
   if (reply) {
     updateConversationContext(intent);
-    console.log("🤖 LLM Response:", reply);
+    console.log("LLM Response:", reply);
     return reply;
   }
 
@@ -151,20 +151,17 @@ export async function textToSpeech(text: string): Promise<Buffer | null> {
     const response = await deepgramClient.speak.request(
       { text },
       {
-        model: "aura-2-thalia-en", // Use a natural-sounding voice
+        model: "aura-2-thalia-en",
         encoding: "linear16",
-        container: "wav", // Deepgram supports WAV
-        sample_rate: 16000, // Match the audio format expected by Recall AI
+        container: "wav",
+        sample_rate: 16000,
       }
     );
 
-    // Get the audio stream from the response
     const stream = await response.getStream();
 
     if (stream) {
-      // Convert stream to WAV buffer
       const wavBuffer = await getAudioBuffer(stream);
-      // Convert WAV to MP3
       const mp3Buffer = await convertWavToMp3(wavBuffer);
       if (mp3Buffer) {
         return mp3Buffer;
@@ -221,15 +218,14 @@ async function convertWavToMp3(wavBuffer: Buffer): Promise<Buffer | null> {
 
       const inputStream = new Readable();
       inputStream.push(wavBuffer);
-      inputStream.push(null); // End stream
+      inputStream.push(null);
 
       const outputStream = new PassThrough();
 
-      // Create ffmpeg command with streaming
       const command = ffmpeg(inputStream)
         .inputFormat("wav")
         .audioCodec("libmp3lame")
-        .audioBitrate(64) // Lower bitrate for faster conversion
+        .audioBitrate(64)
         .audioFrequency(16000)
         .format("mp3")
         .on("start", (commandLine) => {
@@ -250,8 +246,6 @@ async function convertWavToMp3(wavBuffer: Buffer): Promise<Buffer | null> {
           console.error("❌ Streaming FFmpeg error:", error);
           resolve(null);
         });
-
-      // Collect output chunks
       outputStream.on("data", (chunk: Buffer) => {
         mp3Chunks.push(chunk);
       });
@@ -261,7 +255,6 @@ async function convertWavToMp3(wavBuffer: Buffer): Promise<Buffer | null> {
         resolve(null);
       });
 
-      // Pipe ffmpeg output to our collector
       command.pipe(outputStream, { end: true });
     } catch (error) {
       console.error("❌ Streaming conversion setup error:", error);
