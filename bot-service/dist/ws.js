@@ -20,24 +20,27 @@ wss.on("connection", (ws) => {
     console.log("✅ New WebSocket client connected from Recall AI");
     console.log("📝 Ready to receive transcript events via WebSocket");
     ws.on("message", (message) => __awaiter(void 0, void 0, void 0, function* () {
-        var _a, _b, _c;
         try {
             const wsMessage = JSON.parse(message.toString());
             console.log("📥 Received WebSocket message:", JSON.stringify(wsMessage, null, 2));
             if (wsMessage.event === "transcript.data") {
-                const transcriptData = wsMessage.data;
-                console.log(`📝 Transcript: "${transcriptData.text}"`);
-                console.log(`🔍 Speaker: ${((_a = transcriptData.speaker) === null || _a === void 0 ? void 0 : _a.name) ||
-                    ((_b = transcriptData.speaker) === null || _b === void 0 ? void 0 : _b.id) ||
-                    "Unknown"}`);
-                console.log(`🔍 Is final: ${transcriptData.is_final}`);
-                console.log(`🔍 Confidence: ${transcriptData.confidence || "N/A"}`);
-                console.log(`🔍 Bot ID: ${transcriptData.bot_id}`);
-                console.log(`🔍 Recording ID: ${transcriptData.recording_id}`);
-                // Only process final transcripts to avoid duplicate responses
-                if (transcriptData.is_final && ((_c = transcriptData.text) === null || _c === void 0 ? void 0 : _c.trim())) {
+                // Extract data from the nested structure
+                const wordsData = wsMessage.data.data.words;
+                const participant = wsMessage.data.data.participant;
+                const botId = wsMessage.data.bot.id;
+                const recordingId = wsMessage.data.recording.id;
+                // Combine all words into a transcript text
+                const transcriptText = wordsData.map((word) => word.text).join(" ");
+                console.log(`📝 Transcript: "${transcriptText}"`);
+                console.log(`🔍 Speaker: ${participant.name} (ID: ${participant.id})`);
+                console.log(`🔍 Is host: ${participant.is_host}`);
+                console.log(`🔍 Word count: ${wordsData.length}`);
+                console.log(`🔍 Bot ID: ${botId}`);
+                console.log(`🔍 Recording ID: ${recordingId}`);
+                // Process the transcript if we have text
+                if (transcriptText === null || transcriptText === void 0 ? void 0 : transcriptText.trim()) {
                     try {
-                        const reply = yield (0, llm_1.askLLM)(transcriptData.text);
+                        const reply = yield (0, llm_1.askLLM)(transcriptText);
                         if (reply) {
                             console.log("🤖 LLM Reply:", reply);
                             // Convert LLM response to speech
@@ -67,7 +70,7 @@ wss.on("connection", (ws) => {
                     }
                 }
                 else {
-                    console.log("⏭️ Skipping interim transcript or empty text");
+                    console.log("⏭️ Skipping empty transcript");
                 }
             }
             else {

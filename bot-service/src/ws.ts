@@ -5,16 +5,42 @@ import { sendAudioToBot } from "./recall";
 type TranscriptDataEvent = {
   event: "transcript.data";
   data: {
-    text: string; // The transcribed text
-    is_final: boolean; // Whether this is a final transcript or interim
-    speaker?: {
-      id: string;
-      name?: string;
+    data: {
+      words: Array<{
+        text: string;
+        start_timestamp: {
+          relative: number;
+          absolute: string;
+        };
+        end_timestamp: {
+          relative: number;
+          absolute: string;
+        };
+      }>;
+      participant: {
+        id: number;
+        name: string;
+        is_host: boolean;
+        platform: string;
+        extra_data?: any;
+      };
     };
-    timestamp: number;
-    bot_id: string;
-    recording_id: string;
-    confidence?: number;
+    transcript: {
+      id: string;
+      metadata: any;
+    };
+    realtime_endpoint: {
+      id: string;
+      metadata: any;
+    };
+    recording: {
+      id: string;
+      metadata: any;
+    };
+    bot: {
+      id: string;
+      metadata: any;
+    };
   };
 };
 
@@ -33,25 +59,26 @@ wss.on("connection", (ws) => {
       );
 
       if (wsMessage.event === "transcript.data") {
-        const transcriptData = wsMessage.data;
+        // Extract data from the nested structure
+        const wordsData = wsMessage.data.data.words;
+        const participant = wsMessage.data.data.participant;
+        const botId = wsMessage.data.bot.id;
+        const recordingId = wsMessage.data.recording.id;
 
-        console.log(`📝 Transcript: "${transcriptData.text}"`);
-        console.log(
-          `🔍 Speaker: ${
-            transcriptData.speaker?.name ||
-            transcriptData.speaker?.id ||
-            "Unknown"
-          }`
-        );
-        console.log(`🔍 Is final: ${transcriptData.is_final}`);
-        console.log(`🔍 Confidence: ${transcriptData.confidence || "N/A"}`);
-        console.log(`🔍 Bot ID: ${transcriptData.bot_id}`);
-        console.log(`🔍 Recording ID: ${transcriptData.recording_id}`);
+        // Combine all words into a transcript text
+        const transcriptText = wordsData.map((word) => word.text).join(" ");
 
-        // Only process final transcripts to avoid duplicate responses
-        if (transcriptData.is_final && transcriptData.text?.trim()) {
+        console.log(`📝 Transcript: "${transcriptText}"`);
+        console.log(`🔍 Speaker: ${participant.name} (ID: ${participant.id})`);
+        console.log(`🔍 Is host: ${participant.is_host}`);
+        console.log(`🔍 Word count: ${wordsData.length}`);
+        console.log(`🔍 Bot ID: ${botId}`);
+        console.log(`🔍 Recording ID: ${recordingId}`);
+
+        // Process the transcript if we have text
+        if (transcriptText?.trim()) {
           try {
-            const reply = await askLLM(transcriptData.text);
+            const reply = await askLLM(transcriptText);
             if (reply) {
               console.log("🤖 LLM Reply:", reply);
 
@@ -86,7 +113,7 @@ wss.on("connection", (ws) => {
             console.error("❌ LLM processing error:", error);
           }
         } else {
-          console.log("⏭️ Skipping interim transcript or empty text");
+          console.log("⏭️ Skipping empty transcript");
         }
       } else {
         console.log(`❓ Unhandled event type: ${wsMessage.event}`);

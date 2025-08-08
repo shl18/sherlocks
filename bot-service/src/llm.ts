@@ -39,6 +39,16 @@ function detectIntent(normalizedTranscript: string): string | null {
     return "identity";
   }
 
+  if (
+    normalizedTranscript.includes("yes") ||
+    normalizedTranscript.includes("ok") ||
+    normalizedTranscript.includes("sure") ||
+    normalizedTranscript.includes("thanks") ||
+    normalizedTranscript.includes("bye")
+  ) {
+    return "short";
+  }
+
   return null;
 }
 
@@ -120,10 +130,18 @@ export async function askLLM(transcript: string): Promise<string | null> {
 
   switch (intent) {
     case "greeting":
-      reply = "hey i am sherlocks";
+      // Big reply
+      reply =
+        "Hello there! It's absolutely wonderful to meet you today. I'm Sherlocks, your friendly AI assistant, and I'm here to help you with whatever you need. I hope you're having a fantastic day so far, and I'm excited to assist you with any questions, tasks, or conversations you might want to have. Whether you need help with information, want to chat, or have specific requests, I'm ready and eager to help. How can I make your day better?";
       break;
     case "identity":
-      reply = "i am a bot that can help you with your questions";
+      // Medium reply
+      reply =
+        "I'm Sherlocks, an AI bot designed to help you with various questions and tasks. I can assist with information, have conversations, and try to be helpful in whatever way you need.";
+      break;
+    case "short":
+      // Small reply
+      reply = "Got it!";
       break;
     default:
       console.log("No response defined for intent:", intent);

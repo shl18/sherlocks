@@ -20,7 +20,6 @@ const dotenv_1 = __importDefault(require("dotenv"));
 dotenv_1.default.config();
 const RECALL_API_KEY = process.env.RECALL_API_KEY;
 const RECALL_API_URL = "https://us-west-2.recall.ai/api/v1/bot/";
-// Store bot ID for audio output
 let currentBotId = null;
 function startRecallBot(meetingUrl) {
     return __awaiter(this, void 0, void 0, function* () {
@@ -30,9 +29,7 @@ function startRecallBot(meetingUrl) {
                 meeting_url: meetingUrl,
                 bot_name: "Sherlocks",
                 platform: "google_meet",
-                // Use dashboard-configured Deepgram - remove transcription_config to let dashboard handle it
                 recording_config: {
-                    // Enable transcript artifact with deepgram_streaming provider
                     transcript: {
                         enabled: true,
                         provider: {
@@ -44,12 +41,11 @@ function startRecallBot(meetingUrl) {
                     realtime_endpoints: [
                         {
                             type: "websocket",
-                            url: "wss://6fad6a2e0355.ngrok-free.app",
-                            events: ["transcript.data", "transcript.partial_data"], // Now transcript should work with API key configured
+                            url: "wss://a63971060c54.ngrok-free.app",
+                            events: ["transcript.data", "participant_events.chat_message"],
                         },
                     ],
                 },
-                // Enable bot audio output capabilities
                 output_media: {
                     enabled: true,
                 },
@@ -78,7 +74,6 @@ function startRecallBot(meetingUrl) {
             console.log("bot_id:", id);
             console.log("meeting:", meeting_url);
             console.log("🔍 Full Recall API response:", response.data);
-            // Audio stream will be provided via the websocket endpoint configured above
             return {
                 botId: id,
                 meetingInfo: meeting_url,
