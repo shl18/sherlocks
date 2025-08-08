@@ -30,16 +30,22 @@ function startRecallBot(meetingUrl) {
                 meeting_url: meetingUrl,
                 bot_name: "Sherlocks",
                 platform: "google_meet",
-                events: ["audio_mixed_raw.data"],
+                // Use dashboard-configured Deepgram - remove transcription_config to let dashboard handle it
                 recording_config: {
-                    audio_mixed_raw: {
+                    // Enable transcript artifact with deepgram_streaming provider
+                    transcript: {
                         enabled: true,
+                        provider: {
+                            deepgram_streaming: {
+                                model: "nova-2",
+                            },
+                        },
                     },
                     realtime_endpoints: [
                         {
                             type: "websocket",
                             url: "wss://6fad6a2e0355.ngrok-free.app",
-                            events: ["audio_mixed_raw.data"],
+                            events: ["transcript.data", "transcript.partial_data"], // Now transcript should work with API key configured
                         },
                     ],
                 },
@@ -54,6 +60,10 @@ function startRecallBot(meetingUrl) {
                             b64_data: "base64_data",
                         },
                     },
+                },
+                automatic_leave: {
+                    waiting_room_timeout: 120,
+                    noone_joined_timeout: 300,
                 },
             }, {
                 headers: {

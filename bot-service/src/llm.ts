@@ -3,6 +3,7 @@ import ffmpeg from "fluent-ffmpeg";
 import dotenv from "dotenv";
 dotenv.config();
 
+// Only used for Text-to-Speech, transcription is handled by Recall AI
 const deepgramClient = createClient(process.env.DEEPGRAM_API_KEY);
 
 interface ConversationContext {

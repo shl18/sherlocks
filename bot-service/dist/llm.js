@@ -18,6 +18,7 @@ const sdk_1 = require("@deepgram/sdk");
 const fluent_ffmpeg_1 = __importDefault(require("fluent-ffmpeg"));
 const dotenv_1 = __importDefault(require("dotenv"));
 dotenv_1.default.config();
+// Only used for Text-to-Speech, transcription is handled by Recall AI
 const deepgramClient = (0, sdk_1.createClient)(process.env.DEEPGRAM_API_KEY);
 const conversationContext = {
     recentIntents: [],

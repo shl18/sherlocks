@@ -1,1 +1,1 @@
-{"root":["./src/index.ts","./src/llm.ts","./src/recall.ts","./src/ws.ts"],"version":"5.9.2"}
+{"root":["./src/index.ts","./src/llm.ts","./src/recall.ts","./src/webhook.ts","./src/ws.ts"],"version":"5.9.2"}

@@ -13,15 +13,15 @@ const recall_1 = require("./recall");
 require("./ws");
 function main() {
     return __awaiter(this, void 0, void 0, function* () {
-        const meetingUrl = "https://meet.google.com/vji-wwvm-kkd";
+        const meetingUrl = "https://meet.google.com/jwh-bgsr-qzi";
         const { botId } = yield (0, recall_1.startRecallBot)(meetingUrl);
         if (!botId) {
-            console.log(" Failed to start bot");
+            console.log("❌ Failed to start bot");
             return;
         }
-        console.log(" WebSocket server is running and ready to receive audio...");
-        console.log(" Recall AI will stream audio to our WebSocket server");
-        console.log("📝 Audio will be transcribed and sent to LLM automatically");
+        console.log("✅ WebSocket server is running and ready to receive transcripts...");
+        console.log("📡 Recall AI will send transcripts to our WebSocket server");
+        console.log("📝 Transcripts will be processed by LLM automatically");
     });
 }
 main();
