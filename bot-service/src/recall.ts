@@ -49,6 +49,9 @@ export async function startRecallBot(meetingUrl: string) {
           waiting_room_timeout: 120,
           noone_joined_timeout: 300,
         },
+        automatic_video_output: {
+          url: "",
+        },
       },
       {
         headers: {

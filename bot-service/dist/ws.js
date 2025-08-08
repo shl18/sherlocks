@@ -15,20 +15,62 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const ws_1 = __importDefault(require("ws"));
 const llm_1 = require("./llm");
 const recall_1 = require("./recall");
+/**
+ * Process text input with LLM and send audio response
+ * @param text - The text to process (from transcript or chat)
+ * @param source - The source of the text ("transcript" or "chat")
+ */
+function processTextWithLLM(text, source) {
+    return __awaiter(this, void 0, void 0, function* () {
+        try {
+            console.log(`🧠 Processing ${source} text with LLM: "${text}"`);
+            const reply = yield (0, llm_1.askLLM)(text);
+            if (reply) {
+                console.log(`🤖 LLM Reply for ${source}:`, reply);
+                // Convert LLM response to speech
+                console.log("🔊 Converting LLM response to speech...");
+                const audioBuffer = yield (0, llm_1.textToSpeech)(reply);
+                if (audioBuffer) {
+                    console.log("🎵 Audio buffer size:", audioBuffer.length, "bytes");
+                    // Send TTS audio to the bot to speak in the call
+                    const success = yield (0, recall_1.sendAudioToBot)(audioBuffer);
+                    if (success) {
+                        console.log(`🗣️ Bot will now speak the response for ${source} in the call!`);
+                    }
+                    else {
+                        console.log("❌ Failed to send audio to bot");
+                    }
+                }
+                else {
+                    console.log("❌ Failed to convert LLM response to speech");
+                }
+            }
+            else {
+                console.log(`🤖 LLM: No response generated for ${source}`);
+            }
+        }
+        catch (error) {
+            console.error(`❌ LLM processing error for ${source}:`, error);
+        }
+    });
+}
 const wss = new ws_1.default.Server({ port: 3456 });
 wss.on("connection", (ws) => {
     console.log("✅ New WebSocket client connected from Recall AI");
     console.log("📝 Ready to receive transcript events via WebSocket");
     ws.on("message", (message) => __awaiter(void 0, void 0, void 0, function* () {
+        var _a;
         try {
             const wsMessage = JSON.parse(message.toString());
             console.log("📥 Received WebSocket message:", JSON.stringify(wsMessage, null, 2));
             if (wsMessage.event === "transcript.data") {
+                // Type assertion to ensure proper typing
+                const transcriptEvent = wsMessage;
                 // Extract data from the nested structure
-                const wordsData = wsMessage.data.data.words;
-                const participant = wsMessage.data.data.participant;
-                const botId = wsMessage.data.bot.id;
-                const recordingId = wsMessage.data.recording.id;
+                const wordsData = transcriptEvent.data.data.words;
+                const participant = transcriptEvent.data.data.participant;
+                const botId = transcriptEvent.data.bot.id;
+                const recordingId = transcriptEvent.data.recording.id;
                 // Combine all words into a transcript text
                 const transcriptText = wordsData.map((word) => word.text).join(" ");
                 console.log(`📝 Transcript: "${transcriptText}"`);
@@ -39,38 +81,34 @@ wss.on("connection", (ws) => {
                 console.log(`🔍 Recording ID: ${recordingId}`);
                 // Process the transcript if we have text
                 if (transcriptText === null || transcriptText === void 0 ? void 0 : transcriptText.trim()) {
-                    try {
-                        const reply = yield (0, llm_1.askLLM)(transcriptText);
-                        if (reply) {
-                            console.log("🤖 LLM Reply:", reply);
-                            // Convert LLM response to speech
-                            console.log("🔊 Converting LLM response to speech...");
-                            const audioBuffer = yield (0, llm_1.textToSpeech)(reply);
-                            if (audioBuffer) {
-                                console.log("🎵 Audio buffer size:", audioBuffer.length, "bytes");
-                                // Send TTS audio to the bot to speak in the call
-                                const success = yield (0, recall_1.sendAudioToBot)(audioBuffer);
-                                if (success) {
-                                    console.log("🗣️ Bot will now speak the response in the call!");
-                                }
-                                else {
-                                    console.log("❌ Failed to send audio to bot");
-                                }
-                            }
-                            else {
-                                console.log("❌ Failed to convert LLM response to speech");
-                            }
-                        }
-                        else {
-                            console.log("🤖 LLM: No response generated");
-                        }
-                    }
-                    catch (error) {
-                        console.error("❌ LLM processing error:", error);
-                    }
+                    yield processTextWithLLM(transcriptText, "transcript");
                 }
                 else {
                     console.log("⏭️ Skipping empty transcript");
+                }
+            }
+            else if (wsMessage.event === "participant_events.chat_message") {
+                // Type assertion to ensure proper typing
+                const chatEvent = wsMessage;
+                // Extract chat message data
+                const participant = chatEvent.data.data.participant;
+                const chatData = chatEvent.data.data.data;
+                const timestamp = chatEvent.data.data.timestamp;
+                const botId = chatEvent.data.bot.id;
+                const recordingId = chatEvent.data.recording.id;
+                console.log(`💬 Chat Message: "${chatData.text}"`);
+                console.log(`🔍 Speaker: ${participant.name}`);
+                console.log(`🔍 Is host: ${participant.is_host}`);
+                console.log(`🔍 To: ${chatData.to}`);
+                console.log(`🔍 Timestamp: ${timestamp.absolute}`);
+                console.log(`🔍 Bot ID: ${botId}`);
+                console.log(`🔍 Recording ID: ${recordingId}`);
+                // Process the chat message if we have text
+                if ((_a = chatData.text) === null || _a === void 0 ? void 0 : _a.trim()) {
+                    yield processTextWithLLM(chatData.text, "chat");
+                }
+                else {
+                    console.log("⏭️ Skipping empty chat message");
                 }
             }
             else {
