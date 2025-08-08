@@ -98,19 +98,14 @@ async function processTextWithLLM(
 ): Promise<void> {
   try {
     console.log(`🧠 Processing ${source} text with LLM: "${text}"`);
-
     const reply = await askLLM(text);
     if (reply) {
       console.log(`🤖 LLM Reply for ${source}:`, reply);
-
-      // Convert LLM response to speech
       console.log("🔊 Converting LLM response to speech...");
       const audioBuffer = await textToSpeech(reply);
 
       if (audioBuffer) {
         console.log("🎵 Audio buffer size:", audioBuffer.length, "bytes");
-
-        // Send TTS audio to the bot to speak in the call
         const success = await sendAudioToBot(audioBuffer);
 
         if (success) {
