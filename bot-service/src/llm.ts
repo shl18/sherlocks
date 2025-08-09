@@ -1,10 +1,9 @@
 import { createClient } from "@deepgram/sdk";
 import ffmpeg from "fluent-ffmpeg";
 import dotenv from "dotenv";
-import { get } from "http";
+
 dotenv.config();
 
-// Only used for Text-to-Speech, transcription is handled by Recall AI
 const deepgramClient = createClient(process.env.DEEPGRAM_API_KEY);
 
 interface ConversationContext {

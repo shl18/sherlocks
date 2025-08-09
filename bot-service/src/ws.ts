@@ -6,8 +6,6 @@ import {
   startBotSpeaking,
   setBotProcessing,
   forceResetBotState,
-  isBotSpeaking,
-  getRemainingSpeechDuration,
 } from "./llm";
 import { sendAudioToBot, stopBotAudio } from "./recall";
 
@@ -183,31 +181,46 @@ async function speakInChunks(
   generationId: string,
   source: "transcript" | "chat"
 ): Promise<void> {
+  // Smaller max chunk size is handled by splitIntoChunks
   const chunks = splitIntoChunks(reply);
-  for (const chunk of chunks) {
+
+  // Prefetch pipeline: keep one chunk ahead
+  let nextBufferPromise: Promise<Buffer | null> | null = null;
+
+  for (let i = 0; i < chunks.length; i += 1) {
     if (hasGenerationBeenCancelled(generationId)) {
       console.log("🛑 Chunked TTS cancelled before generating next chunk");
       break;
     }
 
-    // Generate TTS for this chunk
-    const audioBuffer = await textToSpeech(chunk);
-    if (!audioBuffer) {
-      console.log("❌ Failed to convert chunk to speech, skipping chunk");
-      continue;
+    const chunk = chunks[i];
+
+    // Kick off prefetch for current chunk if not already
+    if (!nextBufferPromise) {
+      nextBufferPromise = textToSpeech(chunk);
     }
+
+    // Wait for current chunk buffer
+    const audioBuffer = await nextBufferPromise;
 
     if (hasGenerationBeenCancelled(generationId)) {
       console.log("🛑 Chunked TTS cancelled after generation, before send");
       break;
     }
 
-    // Ensure we are not overlapping: if something else is speaking, try to stop and wait briefly
-    if (isAudioPlaying || isBotSpeaking()) {
-      console.log("🔇 Attempting to stop audio before sending next chunk...");
-      await stopBotAudio();
-      await sleep(250);
+    if (!audioBuffer) {
+      console.log("❌ Failed to convert chunk to speech, skipping chunk");
+      // Prepare next prefetch if any
+      const nextChunk = chunks[i + 1];
+      nextBufferPromise = nextChunk ? textToSpeech(nextChunk) : null;
+      continue;
     }
+
+    // Prefetch the next chunk now (overlap generation with current playback)
+    const nextChunk = chunks[i + 1];
+    nextBufferPromise = nextChunk ? textToSpeech(nextChunk) : null;
+
+    // Do not stop audio between chunks; only stop on cancellation/interruption
 
     // Send the audio chunk
     const speechId = `speech_${Date.now()}_${Math.random()
@@ -216,15 +229,14 @@ async function speakInChunks(
     const success = await sendAudioToBot(audioBuffer);
     if (!success) {
       console.log("❌ Failed to send audio chunk to bot");
-      // If send fails, cancel the rest to avoid piling up
-      break;
+      break; // stop to avoid piling up
     }
 
-    // Mark speaking and estimate duration for pacing
+    // Mark speaking and estimate duration for pacing (minimal buffer)
     startBotSpeaking(speechId, chunk);
     isAudioPlaying = true;
     currentAudioId = speechId;
-    const estimatedMs = estimateDurationMs(chunk) + 200; // small buffer
+    const estimatedMs = Math.max(450, estimateDurationMs(chunk) + 50); // smaller buffer
 
     // Wait in small slices so we can react to cancellation quickly
     let remaining = estimatedMs;
@@ -236,7 +248,7 @@ async function speakInChunks(
         await stopBotAudio();
         break;
       }
-      const slice = Math.min(150, remaining);
+      const slice = Math.min(80, remaining); // tighter slices for faster reaction
       await sleep(slice);
       remaining -= slice;
     }
