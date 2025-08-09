@@ -1,6 +1,7 @@
 import { createClient } from "@deepgram/sdk";
 import ffmpeg from "fluent-ffmpeg";
 import dotenv from "dotenv";
+import { get } from "http";
 dotenv.config();
 
 // Only used for Text-to-Speech, transcription is handled by Recall AI
@@ -11,14 +12,38 @@ interface ConversationContext {
   lastResponseTime: number;
 }
 
+interface BotState {
+  isSpeaking: boolean;
+  currentSpeechId: string | null;
+  speechStartTime: number | null;
+  estimatedSpeechDuration: number | null;
+  speechQueue: string[];
+  isProcessing: boolean;
+  lastSpeechText: string | null;
+}
+
 const conversationContext: ConversationContext = {
   recentIntents: [],
   lastResponseTime: 0,
 };
 
+const botState: BotState = {
+  isSpeaking: false,
+  currentSpeechId: null,
+  speechStartTime: null,
+  estimatedSpeechDuration: null,
+  speechQueue: [],
+  isProcessing: false,
+  lastSpeechText: null,
+};
+
 const MAX_INTENT_HISTORY = 5;
 const MIN_RESPONSE_INTERVAL = 2000;
 const SAME_INTENT_COOLDOWN = 6000;
+
+// Average speaking rate: ~150 words per minute (2.5 words per second)
+// Average word length: ~5 characters, so roughly 12.5 characters per second
+const CHARACTERS_PER_SECOND = 12.5;
 
 function detectIntent(normalizedTranscript: string): string | null {
   if (
@@ -34,7 +59,12 @@ function detectIntent(normalizedTranscript: string): string | null {
   if (
     normalizedTranscript.includes("who are you") ||
     normalizedTranscript.includes("what u do") ||
-    normalizedTranscript.includes("what is this")
+    normalizedTranscript.includes("what do you do") ||
+    normalizedTranscript.includes("what you do") ||
+    normalizedTranscript.includes("what are you") ||
+    normalizedTranscript.includes("what is this") ||
+    normalizedTranscript.includes("tell me about yourself") ||
+    normalizedTranscript.includes("introduce yourself")
   ) {
     return "identity";
   }
@@ -110,9 +140,168 @@ function updateConversationContext(intent: string) {
   );
 }
 
-export async function askLLM(transcript: string): Promise<string | null> {
+/**
+ * Estimate speech duration based on text length
+ */
+function estimateSpeechDuration(text: string): number {
+  return Math.ceil((text.length / CHARACTERS_PER_SECOND) * 1000); // in milliseconds
+}
+
+/**
+ * Check if bot is currently speaking
+ */
+export function isBotSpeaking(): boolean {
+  if (!botState.isSpeaking) return false;
+
+  // Check if estimated speech time has passed
+  if (botState.speechStartTime && botState.estimatedSpeechDuration) {
+    const elapsed = Date.now() - botState.speechStartTime;
+    if (elapsed > botState.estimatedSpeechDuration) {
+      // Speech should have finished, update state
+      stopBotSpeaking();
+      return false;
+    }
+  }
+
+  return true;
+}
+
+/**
+ * Mark bot as speaking
+ */
+export function startBotSpeaking(speechId: string, text: string): void {
+  const duration = estimateSpeechDuration(text);
+  botState.isSpeaking = true;
+  botState.currentSpeechId = speechId;
+  botState.speechStartTime = Date.now();
+  botState.estimatedSpeechDuration = duration;
+  botState.lastSpeechText = text;
+
+  console.log(
+    `🗣️ Bot started speaking (ID: ${speechId}, estimated duration: ${duration}ms)`
+  );
+
+  // Auto-stop after estimated duration + buffer
+  setTimeout(() => {
+    if (botState.currentSpeechId === speechId) {
+      stopBotSpeaking();
+    }
+  }, duration + 1000); // Add 1 second buffer
+}
+
+/**
+ * Mark bot as stopped speaking
+ */
+export function stopBotSpeaking(): void {
+  if (botState.isSpeaking) {
+    console.log(
+      `🔇 Bot stopped speaking (was ID: ${botState.currentSpeechId})`
+    );
+  }
+
+  botState.isSpeaking = false;
+  botState.currentSpeechId = null;
+  botState.speechStartTime = null;
+  botState.estimatedSpeechDuration = null;
+  botState.lastSpeechText = null;
+}
+
+/**
+ * Clear speech queue when interrupted
+ */
+export function clearSpeechQueue(): void {
+  if (botState.speechQueue.length > 0) {
+    console.log(
+      `🗑️ Clearing speech queue (${botState.speechQueue.length} items)`
+    );
+    botState.speechQueue = [];
+  }
+}
+
+/**
+ * Check if bot is currently processing a request
+ */
+export function isBotProcessing(): boolean {
+  return botState.isProcessing;
+}
+
+/**
+ * Set bot processing state
+ */
+export function setBotProcessing(processing: boolean): void {
+  botState.isProcessing = processing;
+  if (processing) {
+    console.log("🔄 Bot started processing request");
+  } else {
+    console.log("✅ Bot finished processing request");
+  }
+}
+
+/**
+ * Handle interruption when user speaks while bot is talking
+ */
+export function handleInterruption(newTranscript: string): boolean {
+  if (isBotSpeaking() || isBotProcessing()) {
+    console.log(`🚫 INTERRUPTION DETECTED! User said: "${newTranscript}"`);
+
+    if (isBotSpeaking()) {
+      console.log(`🔇 Stopping bot speech (ID: ${botState.currentSpeechId})`);
+      stopBotSpeaking();
+    }
+
+    if (isBotProcessing()) {
+      console.log("⏹️ Bot was processing - marking as interrupted");
+    }
+
+    // Clear any queued speech
+    clearSpeechQueue();
+
+    // Reset processing state
+    setBotProcessing(false);
+
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Get remaining speech duration for the current speech
+ */
+export function getRemainingSpeechDuration(): number {
+  if (
+    !botState.isSpeaking ||
+    !botState.speechStartTime ||
+    !botState.estimatedSpeechDuration
+  ) {
+    return 0;
+  }
+
+  const elapsed = Date.now() - botState.speechStartTime;
+  const remaining = Math.max(0, botState.estimatedSpeechDuration - elapsed);
+  return remaining;
+}
+
+/**
+ * Force reset all bot states (for external interruption handling)
+ */
+export function forceResetBotState(): void {
+  console.log("🔄 Force resetting all bot states");
+  stopBotSpeaking();
+  clearSpeechQueue();
+  setBotProcessing(false);
+}
+
+export async function askLLM(
+  transcript: string,
+  wasInterrupted: boolean = false
+): Promise<string | null> {
   const normalizedTranscript = transcript.toLowerCase().trim();
   console.log("🎧 Processing transcript:", transcript);
+
+  if (wasInterrupted) {
+    console.log("🚫 Processing interrupted transcript - bypassing cooldowns");
+  }
+
   const intent = detectIntent(normalizedTranscript);
 
   if (!intent) {
@@ -122,7 +311,8 @@ export async function askLLM(transcript: string): Promise<string | null> {
 
   console.log("Detected intent:", intent);
 
-  if (!shouldRespond(intent)) {
+  // Skip cooldown checks if this was an interruption
+  if (!wasInterrupted && !shouldRespond(intent)) {
     return null;
   }
 
@@ -132,7 +322,7 @@ export async function askLLM(transcript: string): Promise<string | null> {
     case "greeting":
       // Big reply
       reply =
-        "Hello there! It's absolutely wonderful to meet you today. I'm Sherlocks, your friendly AI assistant, and I'm here to help you with whatever you need. I hope you're having a fantastic day so far, and I'm excited to assist you with any questions, tasks, or conversations you might want to have. Whether you need help with information, want to chat, or have specific requests, I'm ready and eager to help. How can I make your day better?";
+        "Hello there! It’s an absolute pleasure to meet you today. My name is Sherlocks — your friendly, ever-curious, and always-ready AI assistant. Think of me as your knowledgeable companion, your brainstorming buddy, and your tireless problem-solver, all wrapped into one.  I hope your day has been nothing short of amazing so far, and if it hasn’t, well… maybe I can help turn it around. Whether you’re here to explore ideas, unravel mysteries, learn something new, get help with a tricky problem, or simply enjoy a good conversation, I’m ready and eager to dive right in with you. \n\n From answering your questions with precision and clarity, to offering a spark of inspiration when you need it most, my goal is simple: to make your life easier, brighter, and a little more interesting every time we interact.";
       break;
     case "identity":
       // Medium reply

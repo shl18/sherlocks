@@ -1,6 +1,15 @@
 import WebSocket from "ws";
-import { askLLM, textToSpeech } from "./llm";
-import { sendAudioToBot } from "./recall";
+import {
+  askLLM,
+  textToSpeech,
+  handleInterruption,
+  startBotSpeaking,
+  setBotProcessing,
+  forceResetBotState,
+  isBotSpeaking,
+  getRemainingSpeechDuration,
+} from "./llm";
+import { sendAudioToBot, stopBotAudio } from "./recall";
 
 type TranscriptDataEvent = {
   event: "transcript.data";
@@ -92,37 +101,218 @@ type WebSocketEvent =
  * @param text - The text to process (from transcript or chat)
  * @param source - The source of the text ("transcript" or "chat")
  */
+// Global lock to prevent concurrent processing
+let isCurrentlyProcessing = false;
+let currentProcessingId: string | null = null;
+let lastAudioSentTime = 0;
+const AUDIO_COOLDOWN_MS = 10000; // 10 seconds minimum time between audio outputs to prevent overlap
+
+// Global audio lock to prevent any audio overlap
+let isAudioPlaying = false;
+let currentAudioId: string | null = null;
+
+// ===== Chunked TTS Playback (Cancelable) =====
+let currentTtsGenerationId: string | null = null;
+
+function newTtsGenerationId(): string {
+  const id = `gen_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  currentTtsGenerationId = id;
+  return id;
+}
+
+function cancelCurrentTtsGeneration(): void {
+  currentTtsGenerationId = null;
+}
+
+function hasGenerationBeenCancelled(generationId: string): boolean {
+  return currentTtsGenerationId !== generationId;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function splitIntoChunks(text: string): string[] {
+  const maxLen = 140; // keep chunks short for fast latency
+  // First split by sentence boundaries
+  const sentences = text
+    .split(/([.!?]+\s+)/)
+    .reduce<string[]>((acc, part, idx, arr) => {
+      if (part.trim().length === 0) return acc;
+      // Merge text with its following punctuation token
+      if (idx < arr.length - 1 && /[.!?]+\s+/.test(arr[idx + 1] || "")) {
+        acc.push((part + (arr[idx + 1] || "")).trim());
+        arr[idx + 1] = ""; // consume the punctuation token
+      } else {
+        acc.push(part.trim());
+      }
+      return acc;
+    }, []);
+
+  const chunks: string[] = [];
+  for (const sentence of sentences) {
+    if (sentence.length <= maxLen) {
+      chunks.push(sentence);
+      continue;
+    }
+    // Further split long sentences by words without breaking mid-word
+    const words = sentence.split(/\s+/);
+    let buf = "";
+    for (const word of words) {
+      if ((buf + (buf ? " " : "") + word).length > maxLen) {
+        if (buf) chunks.push(buf);
+        buf = word;
+      } else {
+        buf = buf ? `${buf} ${word}` : word;
+      }
+    }
+    if (buf) chunks.push(buf);
+  }
+  return chunks;
+}
+
+function estimateDurationMs(text: string): number {
+  // ~12.5 chars/sec from llm.ts
+  const CHARACTERS_PER_SECOND = 12.5;
+  const base = Math.ceil((text.length / CHARACTERS_PER_SECOND) * 1000);
+  return Math.max(600, base); // minimum ~0.6s to avoid ultra short clips
+}
+
+async function speakInChunks(
+  reply: string,
+  generationId: string,
+  source: "transcript" | "chat"
+): Promise<void> {
+  const chunks = splitIntoChunks(reply);
+  for (const chunk of chunks) {
+    if (hasGenerationBeenCancelled(generationId)) {
+      console.log("🛑 Chunked TTS cancelled before generating next chunk");
+      break;
+    }
+
+    // Generate TTS for this chunk
+    const audioBuffer = await textToSpeech(chunk);
+    if (!audioBuffer) {
+      console.log("❌ Failed to convert chunk to speech, skipping chunk");
+      continue;
+    }
+
+    if (hasGenerationBeenCancelled(generationId)) {
+      console.log("🛑 Chunked TTS cancelled after generation, before send");
+      break;
+    }
+
+    // Ensure we are not overlapping: if something else is speaking, try to stop and wait briefly
+    if (isAudioPlaying || isBotSpeaking()) {
+      console.log("🔇 Attempting to stop audio before sending next chunk...");
+      await stopBotAudio();
+      await sleep(250);
+    }
+
+    // Send the audio chunk
+    const speechId = `speech_${Date.now()}_${Math.random()
+      .toString(36)
+      .substr(2, 9)}`;
+    const success = await sendAudioToBot(audioBuffer);
+    if (!success) {
+      console.log("❌ Failed to send audio chunk to bot");
+      // If send fails, cancel the rest to avoid piling up
+      break;
+    }
+
+    // Mark speaking and estimate duration for pacing
+    startBotSpeaking(speechId, chunk);
+    isAudioPlaying = true;
+    currentAudioId = speechId;
+    const estimatedMs = estimateDurationMs(chunk) + 200; // small buffer
+
+    // Wait in small slices so we can react to cancellation quickly
+    let remaining = estimatedMs;
+    while (remaining > 0) {
+      if (hasGenerationBeenCancelled(generationId)) {
+        console.log(
+          "🛑 Chunked TTS cancelled mid-wait; attempting to stop audio"
+        );
+        await stopBotAudio();
+        break;
+      }
+      const slice = Math.min(150, remaining);
+      await sleep(slice);
+      remaining -= slice;
+    }
+
+    // Release audio lock for next chunk
+    if (currentAudioId === speechId) {
+      isAudioPlaying = false;
+      currentAudioId = null;
+    }
+
+    if (hasGenerationBeenCancelled(generationId)) {
+      console.log("🛑 Chunked TTS cancelled after chunk send");
+      break;
+    }
+  }
+}
+
 async function processTextWithLLM(
   text: string,
   source: "transcript" | "chat"
 ): Promise<void> {
+  // Prevent multiple concurrent processing
+  if (isCurrentlyProcessing) {
+    console.log(
+      `⏭️ Skipping ${source} processing - already processing another request`
+    );
+    return;
+  }
+
+  const processingId = `proc_${Date.now()}_${Math.random()
+    .toString(36)
+    .substr(2, 9)}`;
+
   try {
+    isCurrentlyProcessing = true;
+    currentProcessingId = processingId;
     console.log(`🧠 Processing ${source} text with LLM: "${text}"`);
-    const reply = await askLLM(text);
+
+    // Mark bot as processing
+    setBotProcessing(true);
+
+    // Check for interruption - if user speaks while bot is talking
+    const wasInterrupted = handleInterruption(text);
+    if (wasInterrupted) {
+      console.log("🚫 Previous bot speech interrupted by user input");
+
+      // Stop any current audio output and cancel ongoing chunk generation
+      console.log("🔇 Attempting to stop current bot audio...");
+      await stopBotAudio();
+      cancelCurrentTtsGeneration();
+
+      // Reset states
+      forceResetBotState();
+      currentProcessingId = processingId;
+    }
+
+    const reply = await askLLM(text, wasInterrupted);
     if (reply) {
       console.log(`🤖 LLM Reply for ${source}:`, reply);
-      console.log("🔊 Converting LLM response to speech...");
-      const audioBuffer = await textToSpeech(reply);
 
-      if (audioBuffer) {
-        console.log("🎵 Audio buffer size:", audioBuffer.length, "bytes");
-        const success = await sendAudioToBot(audioBuffer);
-
-        if (success) {
-          console.log(
-            `🗣️ Bot will now speak the response for ${source} in the call!`
-          );
-        } else {
-          console.log("❌ Failed to send audio to bot");
-        }
-      } else {
-        console.log("❌ Failed to convert LLM response to speech");
-      }
+      // Start chunked, cancelable playback asynchronously
+      const generationId = newTtsGenerationId();
+      // Fire and forget so we don't block receiving further transcripts
+      void speakInChunks(reply, generationId, source);
     } else {
       console.log(`🤖 LLM: No response generated for ${source}`);
     }
   } catch (error) {
     console.error(`❌ LLM processing error for ${source}:`, error);
+  } finally {
+    // Clear processing state quickly so we can accept new inputs/interruption
+    setBotProcessing(false);
+    if (currentProcessingId === processingId) {
+      isCurrentlyProcessing = false;
+      currentProcessingId = null;
+    }
   }
 }
 

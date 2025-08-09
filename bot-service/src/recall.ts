@@ -141,6 +141,57 @@ export async function sendAudioToBot(audioBuffer: Buffer): Promise<boolean> {
 }
 
 /**
+ * Stop current audio output by sending a very short silence
+ * This effectively cancels any ongoing audio playback
+ */
+export async function stopBotAudio(): Promise<boolean> {
+  if (!currentBotId) {
+    console.error("❌ No bot ID available for audio stop");
+    return false;
+  }
+
+  try {
+    console.log("🔇 Stopping bot audio output...");
+
+    // Import the textToSpeech function to generate silence
+    const { textToSpeech } = await import("./llm");
+
+    // Generate a very short silence by using a single character
+    const silenceBuffer = await textToSpeech(".");
+
+    if (!silenceBuffer) {
+      console.error("❌ Failed to generate silence audio");
+      return false;
+    }
+
+    const base64Silence = silenceBuffer.toString("base64");
+
+    const url = `${RECALL_API_URL}${currentBotId}/output_audio/`;
+
+    const payload = {
+      kind: "mp3",
+      b64_data: base64Silence,
+    };
+
+    const response = await axios.post(url, payload, {
+      headers: {
+        accept: "application/json",
+        "content-type": "application/json",
+        Authorization: `Token ${RECALL_API_KEY}`,
+      },
+      timeout: 5000, // 5 second timeout for stop command
+    });
+
+    console.log("✅ Bot audio stopped successfully!");
+    return true;
+  } catch (error: any) {
+    console.error("❌ Failed to stop bot audio:");
+    console.error("❌ Error:", error.message);
+    return false;
+  }
+}
+
+/**
  * Get the current bot ID
  */
 export function getCurrentBotId(): string | null {
