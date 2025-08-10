@@ -1,4 +1,37 @@
 "use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
     function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
     return new (P || (P = Promise))(function (resolve, reject) {
@@ -13,6 +46,8 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 const ws_1 = __importDefault(require("ws"));
+const fs = __importStar(require("fs"));
+const path = __importStar(require("path"));
 const llm_1 = require("./llm");
 const recall_1 = require("./recall");
 /**
@@ -221,7 +256,7 @@ wss.on("connection", (ws) => {
     console.log("✅ New WebSocket client connected from Recall AI");
     console.log("📝 Ready to receive transcript events via WebSocket");
     ws.on("message", (message) => __awaiter(void 0, void 0, void 0, function* () {
-        var _a;
+        var _a, _b;
         try {
             const wsMessage = JSON.parse(message.toString());
             console.log("📥 Received WebSocket message:", JSON.stringify(wsMessage, null, 2));
@@ -281,13 +316,46 @@ wss.on("connection", (ws) => {
                 const participant = videoEvent.data.data.participant;
                 const botId = videoEvent.data.bot.id;
                 const recordingId = videoEvent.data.recording.id;
-                console.log(`🎥 Video Event: "${buffer}"`);
-                console.log(`🔍 Speaker: ${participant.name}`);
-                console.log(`🔍 Is host: ${participant.is_host}`);
-                console.log(`🔍 Type: ${type}`);
-                console.log(`🔍 Timestamp: ${timestamp.absolute}`);
-                console.log(`🔍 Bot ID: ${botId}`);
-                console.log(`🔍 Recording ID: ${recordingId}`);
+                // console.log(`🎥 Video Event: "${buffer}"`);
+                // console.log(`🔍 Speaker: ${participant.name}`);
+                // console.log(`🔍 Is host: ${participant.is_host}`);
+                // console.log(`🔍 Type: ${type}`);
+                // console.log(`🔍 Timestamp: ${timestamp.absolute}`);
+                // console.log(`🔍 Bot ID: ${botId}`);
+                // console.log(`🔍 Recording ID: ${recordingId}`);
+                // Persist the received image to the "upload" folder
+                try {
+                    const uploadDir = path.resolve(__dirname, "..", "upload");
+                    // Ensure directory exists
+                    try {
+                        fs.mkdirSync(uploadDir, { recursive: true });
+                    }
+                    catch (mkdirErr) {
+                        console.error("❌ Failed to ensure upload directory:", mkdirErr);
+                    }
+                    // Some sources may prepend a data URL header; strip if present
+                    const base64Data = buffer.startsWith("data:")
+                        ? buffer.split(",")[1] || ""
+                        : buffer;
+                    const imageBuffer = Buffer.from(base64Data, "base64");
+                    // Sanitize parts used in filename
+                    const safeAbs = String(timestamp.absolute || "")
+                        .replace(/[^\w.-]/g, "_")
+                        .slice(0, 64);
+                    const safeType = String(type || "unknown").replace(/[^\w.-]/g, "_");
+                    const safeParticipant = String((_b = participant.id) !== null && _b !== void 0 ? _b : "unknown").toString();
+                    const filenameBase = safeAbs || `ts_${Date.now()}`;
+                    const filename = `${filenameBase}_${safeType}_${safeParticipant}.png`;
+                    const filePath = path.join(uploadDir, filename);
+                    yield fs.promises.writeFile(filePath, imageBuffer);
+                    // console
+                    //   .log
+                    //   // `💾 Saved frame to ${filePath} (${imageBuffer.length} bytes)`
+                    //   ();
+                }
+                catch (saveErr) {
+                    console.error("❌ Failed to save received image frame:", saveErr);
+                }
             }
             else {
                 console.log(`❓ Unhandled event type: ${wsMessage.event}`);

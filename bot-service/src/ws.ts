@@ -1,4 +1,6 @@
 import WebSocket from "ws";
+import * as fs from "fs";
+import * as path from "path";
 import {
   askLLM,
   textToSpeech,
@@ -440,13 +442,50 @@ wss.on("connection", (ws) => {
         const botId = videoEvent.data.bot.id;
         const recordingId = videoEvent.data.recording.id;
 
-        console.log(`🎥 Video Event: "${buffer}"`);
-        console.log(`🔍 Speaker: ${participant.name}`);
-        console.log(`🔍 Is host: ${participant.is_host}`);
-        console.log(`🔍 Type: ${type}`);
-        console.log(`🔍 Timestamp: ${timestamp.absolute}`);
-        console.log(`🔍 Bot ID: ${botId}`);
-        console.log(`🔍 Recording ID: ${recordingId}`);
+        // console.log(`🎥 Video Event: "${buffer}"`);
+        // console.log(`🔍 Speaker: ${participant.name}`);
+        // console.log(`🔍 Is host: ${participant.is_host}`);
+        // console.log(`🔍 Type: ${type}`);
+        // console.log(`🔍 Timestamp: ${timestamp.absolute}`);
+        // console.log(`🔍 Bot ID: ${botId}`);
+        // console.log(`🔍 Recording ID: ${recordingId}`);
+
+        // Persist the received image to the "upload" folder
+        try {
+          const uploadDir = path.resolve(__dirname, "..", "upload");
+          // Ensure directory exists
+          try {
+            fs.mkdirSync(uploadDir, { recursive: true });
+          } catch (mkdirErr) {
+            console.error("❌ Failed to ensure upload directory:", mkdirErr);
+          }
+
+          // Some sources may prepend a data URL header; strip if present
+          const base64Data = buffer.startsWith("data:")
+            ? buffer.split(",")[1] || ""
+            : buffer;
+          const imageBuffer = Buffer.from(base64Data, "base64");
+
+          // Sanitize parts used in filename
+          const safeAbs = String(timestamp.absolute || "")
+            .replace(/[^\w.-]/g, "_")
+            .slice(0, 64);
+          const safeType = String(type || "unknown").replace(/[^\w.-]/g, "_");
+          const safeParticipant = String(
+            participant.id ?? "unknown"
+          ).toString();
+          const filenameBase = safeAbs || `ts_${Date.now()}`;
+          const filename = `${filenameBase}_${safeType}_${safeParticipant}.png`;
+          const filePath = path.join(uploadDir, filename);
+
+          await fs.promises.writeFile(filePath, imageBuffer);
+          // console
+          //   .log
+          //   // `💾 Saved frame to ${filePath} (${imageBuffer.length} bytes)`
+          //   ();
+        } catch (saveErr) {
+          console.error("❌ Failed to save received image frame:", saveErr);
+        }
       } else {
         console.log(`❓ Unhandled event type: ${wsMessage.event}`);
       }

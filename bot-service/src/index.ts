@@ -2,7 +2,7 @@ import { startRecallBot } from "./recall";
 import "./ws";
 
 async function main() {
-  const meetingUrl = "https://meet.google.com/csk-mnho-nrh";
+  const meetingUrl = "https://meet.google.com/kvh-zrfk-rts";
   const { botId } = await startRecallBot(meetingUrl);
   if (!botId) {
     console.log("❌ Failed to start bot");
