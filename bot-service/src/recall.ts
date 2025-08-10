@@ -17,6 +17,10 @@ export async function startRecallBot(meetingUrl: string) {
         bot_name: "Sherlocks",
         platform: "google_meet",
         recording_config: {
+          video_separate_png: {
+            kind: "jpeg",
+          },
+          video_mixed_layout: "gallery_view_v2",
           transcript: {
             enabled: true,
             provider: {
@@ -29,7 +33,11 @@ export async function startRecallBot(meetingUrl: string) {
             {
               type: "websocket",
               url: "wss://a63971060c54.ngrok-free.app",
-              events: ["transcript.data", "participant_events.chat_message"],
+              events: [
+                "transcript.data",
+                "participant_events.chat_message",
+                "video_separate_png.data",
+              ],
             },
           ],
         },

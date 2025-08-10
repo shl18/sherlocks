@@ -13,7 +13,7 @@ const recall_1 = require("./recall");
 require("./ws");
 function main() {
     return __awaiter(this, void 0, void 0, function* () {
-        const meetingUrl = "https://meet.google.com/vji-wwvm-kkd";
+        const meetingUrl = "https://meet.google.com/csk-mnho-nrh";
         const { botId } = yield (0, recall_1.startRecallBot)(meetingUrl);
         if (!botId) {
             console.log("❌ Failed to start bot");

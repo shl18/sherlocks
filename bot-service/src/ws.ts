@@ -89,9 +89,47 @@ type ChatMessageEvent = {
   };
 };
 
+type VideoSeparatePngEvent = {
+  event: "video_separate_png.data";
+  data: {
+    data: {
+      buffer: string; // base64 encoded png at 2fps with resolution 360x640
+      timestamp: {
+        relative: number;
+        absolute: string;
+      };
+      type: "webcam" | "screenshare";
+      participant: {
+        id: number;
+        name: string | null;
+        is_host: boolean;
+        platform: string | null;
+        extra_data: object;
+      };
+    };
+    realtime_endpoint: {
+      id: string;
+      metadata: object;
+    };
+    video_separate: {
+      id: string;
+      metadata: object;
+    };
+    recording: {
+      id: string;
+      metadata: object;
+    };
+    bot: {
+      id: string;
+      metadata: object;
+    };
+  };
+};
+
 type WebSocketEvent =
   | TranscriptDataEvent
   | ChatMessageEvent
+  | VideoSeparatePngEvent
   | { event: string; data: any };
 
 /**
@@ -393,6 +431,22 @@ wss.on("connection", (ws) => {
         } else {
           console.log("⏭️ Skipping empty chat message");
         }
+      } else if (wsMessage.event === "video_separate_png.data") {
+        const videoEvent = wsMessage as VideoSeparatePngEvent;
+        const buffer = videoEvent.data.data.buffer;
+        const timestamp = videoEvent.data.data.timestamp;
+        const type = videoEvent.data.data.type;
+        const participant = videoEvent.data.data.participant;
+        const botId = videoEvent.data.bot.id;
+        const recordingId = videoEvent.data.recording.id;
+
+        console.log(`🎥 Video Event: "${buffer}"`);
+        console.log(`🔍 Speaker: ${participant.name}`);
+        console.log(`🔍 Is host: ${participant.is_host}`);
+        console.log(`🔍 Type: ${type}`);
+        console.log(`🔍 Timestamp: ${timestamp.absolute}`);
+        console.log(`🔍 Bot ID: ${botId}`);
+        console.log(`🔍 Recording ID: ${recordingId}`);
       } else {
         console.log(`❓ Unhandled event type: ${wsMessage.event}`);
       }

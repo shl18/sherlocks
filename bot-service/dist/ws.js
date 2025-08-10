@@ -273,6 +273,22 @@ wss.on("connection", (ws) => {
                     console.log("⏭️ Skipping empty chat message");
                 }
             }
+            else if (wsMessage.event === "video_separate_png.data") {
+                const videoEvent = wsMessage;
+                const buffer = videoEvent.data.data.buffer;
+                const timestamp = videoEvent.data.data.timestamp;
+                const type = videoEvent.data.data.type;
+                const participant = videoEvent.data.data.participant;
+                const botId = videoEvent.data.bot.id;
+                const recordingId = videoEvent.data.recording.id;
+                console.log(`🎥 Video Event: "${buffer}"`);
+                console.log(`🔍 Speaker: ${participant.name}`);
+                console.log(`🔍 Is host: ${participant.is_host}`);
+                console.log(`🔍 Type: ${type}`);
+                console.log(`🔍 Timestamp: ${timestamp.absolute}`);
+                console.log(`🔍 Bot ID: ${botId}`);
+                console.log(`🔍 Recording ID: ${recordingId}`);
+            }
             else {
                 console.log(`❓ Unhandled event type: ${wsMessage.event}`);
             }
