@@ -46,12 +46,14 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.startRecallBot = startRecallBot;
+exports.startBotScreenShare = startBotScreenShare;
 exports.sendAudioToBot = sendAudioToBot;
 exports.stopBotAudio = stopBotAudio;
 exports.getCurrentBotId = getCurrentBotId;
 const axios_1 = __importDefault(require("axios"));
 const dotenv_1 = __importDefault(require("dotenv"));
 const constants_1 = require("./constants");
+const console_1 = require("console");
 dotenv_1.default.config();
 const RECALL_API_KEY = process.env.RECALL_API_KEY;
 const RECALL_API_URL = "https://us-west-2.recall.ai/api/v1/bot/";
@@ -81,6 +83,42 @@ function startRecallBot(meetingUrl) {
         catch (error) {
             console.error(" Failed to start bot:", ((_a = error.response) === null || _a === void 0 ? void 0 : _a.data) || error.message);
             throw error;
+        }
+    });
+}
+//bot screenshare
+function startBotScreenShare(urlToShare) {
+    return __awaiter(this, void 0, void 0, function* () {
+        var _a, _b, _c;
+        if (!currentBotId) {
+            console.error(" No bot ID available for screenshare");
+            return console_1.error;
+        }
+        try {
+            const url = `${RECALL_API_URL}${currentBotId}/output_media/`;
+            const payload = {
+                url: urlToShare,
+                kind: "jpeg",
+                b64_data: "Base64_data",
+            };
+            const response = yield axios_1.default.post(url, payload, {
+                headers: {
+                    accept: "application/json",
+                    "content-type": "application/json",
+                    Authorization: `Token ${RECALL_API_KEY}`,
+                },
+            });
+            console.log("✅ Bot screenshare started successfully!");
+            console.log("🔍 Response status:", response.status);
+            console.log("🔍 Response headers:", response.headers);
+            console.log("🔍 Bot screenshare response:", response.data);
+        }
+        catch (error) {
+            console.error("❌ Failed to start bot screenshare:");
+            console.error("❌ Error status:", (_a = error.response) === null || _a === void 0 ? void 0 : _a.status);
+            console.error("❌ Error headers:", (_b = error.response) === null || _b === void 0 ? void 0 : _b.headers);
+            console.error("❌ Error data:", (_c = error.response) === null || _c === void 0 ? void 0 : _c.data);
+            console.error("❌ Error message:", error.message);
         }
     });
 }

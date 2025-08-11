@@ -17,15 +17,17 @@ export type RecallConstants = {
     };
     realtime_endpoints: RecallRealtimeEndpoint[];
   };
-  output_media: { enabled: boolean };
-  automatic_audio_output: {
-    in_call_recording: { data: { kind: "mp3" | "wav"; b64_data: string } };
+  output_media: {
+    screenshare: { kind: string; config: { url: string } };
   };
+  // automatic_audio_output: {
+  //   in_call_recording: { data: { kind: "mp3" | "wav"; b64_data: string } };
+  // };
   automatic_leave: {
     waiting_room_timeout: number;
     noone_joined_timeout: number;
   };
-  automatic_video_output: { url: string };
+  // automatic_video_output: { url: string };
 };
 
 export const BOT_CONFIG = (meetingUrl: string): RecallConstants => ({
@@ -42,7 +44,7 @@ export const BOT_CONFIG = (meetingUrl: string): RecallConstants => ({
     realtime_endpoints: [
       {
         type: "websocket",
-        url: "wss://7f97ba465c79.ngrok-free.app",
+        url: "wss://74229c85924d.ngrok-free.app",
         events: [
           "transcript.data",
           "participant_events.chat_message",
@@ -51,10 +53,17 @@ export const BOT_CONFIG = (meetingUrl: string): RecallConstants => ({
       },
     ],
   },
-  output_media: { enabled: true },
-  automatic_audio_output: {
-    in_call_recording: { data: { kind: "mp3", b64_data: "base64_data" } },
+  output_media: {
+    screenshare: {
+      kind: "webpage",
+      config: {
+        url: "https://www.google.com",
+      },
+    },
   },
+  // automatic_audio_output: {
+  //   in_call_recording: { data: { kind: "mp3", b64_data: "base64_data" } },
+  // },
   automatic_leave: { waiting_room_timeout: 120, noone_joined_timeout: 300 },
-  automatic_video_output: { url: "" },
+  // automatic_video_output: { url: "" },
 });
