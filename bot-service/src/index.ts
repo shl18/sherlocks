@@ -1,8 +1,10 @@
 import { startRecallBot } from "./recall";
+import dotenv from "dotenv";
+dotenv.config();
 import "./ws";
 
 async function main() {
-  const meetingUrl = "https://meet.google.com/kvh-zrfk-rts";
+  const meetingUrl = "https://meet.google.com/xhy-wwkk-jsm";
   const { botId } = await startRecallBot(meetingUrl);
   if (!botId) {
     console.log("❌ Failed to start bot");

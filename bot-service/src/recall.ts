@@ -42,34 +42,46 @@ export async function startRecallBot(meetingUrl: string) {
 
 //bot screenshare
 
-export async function startBotScreenShare(urlToShare: string) {
+export async function switchScreenshare(newUrl: string) {
   if (!currentBotId) {
     console.error(" No bot ID available for screenshare");
     return error;
   }
 
   try {
-    const url = `${RECALL_API_URL}${currentBotId}/output_media/`;
-
-    const payload = {
-      url: urlToShare,
-
-      kind: "jpeg",
-      b64_data: "Base64_data",
-    };
-
-    const response = await axios.post(url, payload, {
+    await axios.delete(`${RECALL_API_URL}${currentBotId}/output_media/`, {
       headers: {
         accept: "application/json",
         "content-type": "application/json",
         Authorization: `Token ${RECALL_API_KEY}`,
       },
+      data: {
+        kind: "webpage",
+        config: {
+          url: newUrl,
+        },
+      },
     });
+    console.log("⏹️ Stopped current media stream");
 
-    console.log("✅ Bot screenshare started successfully!");
-    console.log("🔍 Response status:", response.status);
-    console.log("🔍 Response headers:", response.headers);
-    console.log("🔍 Bot screenshare response:", response.data);
+    const response = await axios.post(
+      `${RECALL_API_URL}${currentBotId}/output_media/`,
+      {
+        kind: "webpage",
+        config: {
+          url: newUrl,
+        },
+      },
+      {
+        headers: {
+          accept: "application/json",
+          "content-type": "application/json",
+          Authorization: `Token ${RECALL_API_KEY}`,
+        },
+      }
+    );
+    console.log("▶ Streaming new webpage:", newUrl);
+    return response;
   } catch (error: any) {
     console.error("❌ Failed to start bot screenshare:");
     console.error("❌ Error status:", error.response?.status);

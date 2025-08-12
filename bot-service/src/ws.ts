@@ -8,6 +8,10 @@ import {
   startBotSpeaking,
   setBotProcessing,
   forceResetBotState,
+  shouldGenerateVideoScript,
+  generateIncidentVideoScript,
+  isGreeting,
+  generateGreetingResponse,
 } from "./llm";
 import { sendAudioToBot, stopBotAudio } from "./recall";
 
@@ -345,7 +349,18 @@ async function processTextWithLLM(
       currentProcessingId = processingId;
     }
 
-    const reply = await askLLM(text, wasInterrupted);
+    let reply: string | null = null;
+
+    // 1) Greeting takes priority for a warm welcome
+    if (isGreeting(text)) {
+      reply = generateGreetingResponse();
+    } else if (shouldGenerateVideoScript(text)) {
+      // 2) Incident payload → Video Script
+      reply = await generateIncidentVideoScript(text);
+    } else {
+      // 3) Default short incident triage reply
+      reply = await askLLM(text, wasInterrupted);
+    }
     if (reply) {
       console.log(`🤖 LLM Reply for ${source}:`, reply);
 

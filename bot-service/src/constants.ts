@@ -44,7 +44,7 @@ export const BOT_CONFIG = (meetingUrl: string): RecallConstants => ({
     realtime_endpoints: [
       {
         type: "websocket",
-        url: "wss://74229c85924d.ngrok-free.app",
+        url: "wss://2d58028128cb.ngrok-free.app",
         events: [
           "transcript.data",
           "participant_events.chat_message",
@@ -57,7 +57,7 @@ export const BOT_CONFIG = (meetingUrl: string): RecallConstants => ({
     screenshare: {
       kind: "webpage",
       config: {
-        url: "https://www.google.com",
+        url: "https://counter-ruby-phi.vercel.app",
       },
     },
   },

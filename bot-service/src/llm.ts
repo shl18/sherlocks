@@ -1,8 +1,11 @@
 import { createClient } from "@deepgram/sdk";
+import OpenAI from "openai";
 import ffmpeg from "fluent-ffmpeg";
 import dotenv from "dotenv";
 
 dotenv.config();
+
+const openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 const deepgramClient = createClient(process.env.DEEPGRAM_API_KEY);
 
@@ -44,36 +47,55 @@ const SAME_INTENT_COOLDOWN = 6000;
 // Average word length: ~5 characters, so roughly 12.5 characters per second
 const CHARACTERS_PER_SECOND = 12.5;
 
+function normalizeForIntent(input: string): string {
+  // Lowercase, strip punctuation, collapse excessive repeated letters, compact spaces
+  const lower = input.toLowerCase();
+  const noPunct = lower.replace(/[^a-z0-9\s]/g, " ");
+  const collapseRepeats = noPunct.replace(/(.)\1{2,}/g, "$1$1"); // e.g., helllo -> hello
+  const compact = collapseRepeats.replace(/\s+/g, " ").trim();
+  return compact;
+}
+
 function detectIntent(normalizedTranscript: string): string | null {
+  const text = normalizeForIntent(normalizedTranscript);
   if (
-    normalizedTranscript.includes("hello") ||
-    normalizedTranscript.includes("hi") ||
-    normalizedTranscript.includes("hey") ||
-    normalizedTranscript.includes("how are you doing") ||
-    normalizedTranscript.includes("whats up")
+    text.includes("hello") ||
+    text.includes("hi") ||
+    text.includes("hey") ||
+    text.includes("hey sai") ||
+    text.includes("hello all") ||
+    text.includes("hi all") ||
+    text.includes("hey all") ||
+    text.includes("hello everyone") ||
+    text.includes("hey everyone") ||
+    text.includes("good morning") ||
+    text.includes("good afternoon") ||
+    text.includes("good evening") ||
+    text.includes("how are you doing") ||
+    text.includes("whats up")
   ) {
     return "greeting";
   }
 
   if (
-    normalizedTranscript.includes("who are you") ||
-    normalizedTranscript.includes("what u do") ||
-    normalizedTranscript.includes("what do you do") ||
-    normalizedTranscript.includes("what you do") ||
-    normalizedTranscript.includes("what are you") ||
-    normalizedTranscript.includes("what is this") ||
-    normalizedTranscript.includes("tell me about yourself") ||
-    normalizedTranscript.includes("introduce yourself")
+    text.includes("who are you") ||
+    text.includes("what u do") ||
+    text.includes("what do you do") ||
+    text.includes("what you do") ||
+    text.includes("what are you") ||
+    text.includes("what is this") ||
+    text.includes("tell me about yourself") ||
+    text.includes("introduce yourself")
   ) {
     return "identity";
   }
 
   if (
-    normalizedTranscript.includes("yes") ||
-    normalizedTranscript.includes("ok") ||
-    normalizedTranscript.includes("sure") ||
-    normalizedTranscript.includes("thanks") ||
-    normalizedTranscript.includes("bye")
+    text.includes("yes") ||
+    text.includes("ok") ||
+    text.includes("sure") ||
+    text.includes("thanks") ||
+    text.includes("bye")
   ) {
     return "short";
   }
@@ -290,7 +312,7 @@ export function forceResetBotState(): void {
   setBotProcessing(false);
 }
 
-export async function askLLM(
+export async function askDummyLLM(
   transcript: string,
   wasInterrupted: boolean = false
 ): Promise<string | null> {
@@ -344,6 +366,159 @@ export async function askLLM(
   }
 
   return null;
+}
+
+export async function askLLM(
+  transcript: string,
+  wasInterrupted: boolean = false
+): Promise<string | null> {
+  try {
+    if (!process.env.OPENAI_API_KEY) {
+      console.error("❌ OPENAI_API_KEY is not set. Skipping askLLM.");
+      return null;
+    }
+    const prompt = transcript?.trim();
+    if (!prompt) return null;
+
+    const system =
+      "You are Sherlocks, an SRE-focused incident triage assistant. Your job is to quickly identify likely root causes, impacted components, and immediate mitigations from short snippets of context. Be concise (1-3 sentences), action-oriented, and specific. Prefer concrete next steps (dashboards, logs to check, feature flags, rollbacks) over generic advice. If interrupted, prioritize the newest message.";
+
+    const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
+
+    // Prefer the lightweight responses for latency
+    const completion = await openaiClient.chat.completions.create({
+      model,
+      temperature: 0.6,
+      max_tokens: 180,
+      messages: [
+        { role: "system", content: system },
+        {
+          role: "user",
+          content: wasInterrupted
+            ? `${prompt}\n\n[Note: This came after an interruption; prioritize this request.]`
+            : prompt,
+        },
+      ],
+    });
+
+    const text = completion.choices?.[0]?.message?.content?.trim();
+    if (!text) return null;
+    return text;
+  } catch (error) {
+    console.error("❌ OpenAI askLLM error:", error);
+    return null;
+  }
+}
+
+/**
+ * Detect whether the provided text looks like an incident/alert payload
+ * and should be reformatted into a narrated "Video Script" summary.
+ */
+export function shouldGenerateVideoScript(text: string): boolean {
+  const t = (text || "").toLowerCase();
+  if (!t) return false;
+  const markers = [
+    "video script",
+    "alert",
+    "critical",
+    "5xx",
+    "runbook",
+    "datadog",
+    "kubectl",
+    "pod ",
+    "pods ",
+    "deployment",
+    "commit",
+    "jenkins",
+    "load average",
+    "rds",
+    "replica",
+    "environment",
+    "investigation summary",
+    "recommended actions",
+  ];
+  return markers.some((m) => t.includes(m));
+}
+
+/**
+ * Generate a short narrated "Video Script" from raw incident/alert text.
+ * The output is optimized for TTS and on-call review.
+ */
+export async function generateIncidentVideoScript(
+  incidentText: string
+): Promise<string | null> {
+  try {
+    if (!process.env.OPENAI_API_KEY) {
+      console.error(
+        "❌ OPENAI_API_KEY is not set. Skipping generateIncidentVideoScript."
+      );
+      return null;
+    }
+
+    const prompt = incidentText?.trim();
+    if (!prompt) return null;
+
+    const system = [
+      "You are Sherlocks, an SRE incident narrator.",
+      "Given raw incident notes/alerts, write a concise 'Video Script' for a voiceover.",
+      "Output ONLY the script in this structure:",
+      "",
+      "Video Script",
+      "",
+      "\tAlert : <one-line alert headline>",
+      "",
+      "\tAnswer:",
+      "\t<2-4 short paragraphs with: observation, likely cause, and immediate actions>",
+      "\tInclude inline square-bracket callouts that name sources from the input, e.g.",
+      "\t[ errors are increasing since 10:30pm (Datadog) ]",
+      "\t[ kubectl top shows high CPU in dostt pods (Kubernetes) ]",
+      "\t[ last deployment at 10:25pm (Jenkins) ]",
+      "\t[ suspect change around line 121 (GitHub) ]",
+      "",
+      "At the end, add 3-5 bullets listing sources checked or to check next.",
+      "When details are missing, infer cautiously and mark as 'likely'.",
+      "Keep under 180 words. Use present tense. No greetings or closings.",
+    ].join("\n");
+
+    const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
+
+    const completion = await openaiClient.chat.completions.create({
+      model,
+      temperature: 0.3,
+      max_tokens: 280,
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: prompt },
+      ],
+    });
+
+    const text = completion.choices?.[0]?.message?.content?.trim();
+    if (!text) return null;
+    return text;
+  } catch (error) {
+    console.error("❌ OpenAI generateIncidentVideoScript error:", error);
+    return null;
+  }
+}
+
+/**
+ * Return true if the text is a greeting (hello/hi/etc.)
+ */
+export function isGreeting(text: string): boolean {
+  const normalized = normalizeForIntent(text || "");
+  const intent = detectIntent(normalized);
+  return intent === "greeting";
+}
+
+/**
+ * Provide a warm, concise greeting suitable for TTS.
+ */
+export function generateGreetingResponse(): string {
+  return (
+    "Hello there! It’s wonderful to meet you. I’m Sherlocks — your friendly AI " +
+    "assistant. I’m here to help with incident triage, debugging, and anything " +
+    "else you need. Just tell me what’s going on, and we’ll tackle it together."
+  );
 }
 
 /**
