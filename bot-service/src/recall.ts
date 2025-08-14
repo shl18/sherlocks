@@ -42,53 +42,136 @@ export async function startRecallBot(meetingUrl: string) {
 
 //bot screenshare
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export async function switchScreenshare(newUrl: string) {
   if (!currentBotId) {
     console.error(" No bot ID available for screenshare");
     return error;
   }
 
-  try {
-    await axios.delete(`${RECALL_API_URL}${currentBotId}/output_media/`, {
-      headers: {
-        accept: "application/json",
-        "content-type": "application/json",
-        Authorization: `Token ${RECALL_API_KEY}`,
-      },
-      data: {
-        kind: "webpage",
-        config: {
-          url: newUrl,
-        },
-      },
-    });
-    console.log("⏹️ Stopped current media stream");
+  const url = `${RECALL_API_URL}${currentBotId}/output_media/`;
+  const headers = {
+    accept: "application/json",
+    "content-type": "application/json",
+    Authorization: `Token ${RECALL_API_KEY}`,
+  };
 
-    const response = await axios.post(
+  // Use explicit screenshare target per Recall API spec
+  const postPayload = {
+    screenshare: { kind: "webpage", config: { url: newUrl } },
+  } as const;
+  const deletePayload = { screenshare: true } as const;
+
+  // Up to 3 attempts with small backoff and a DELETE between attempts
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      await axios.delete(url, { headers, data: deletePayload });
+      console.log("⏹️ Stopped current media stream");
+    } catch (delErr: any) {
+      // Some accounts may not have an active stream; ignore 404/400 during delete
+      console.warn(
+        "⚠️ Delete output_media returned:",
+        delErr.response?.status || delErr.message
+      );
+    }
+
+    // tiny delay to let Recall settle
+    await sleep(250);
+
+    try {
+      const response = await axios.post(url, postPayload, { headers });
+      console.log("▶ Streaming new webpage:", newUrl);
+      return response;
+    } catch (postErr: any) {
+      console.error(
+        `❌ Failed to start bot screenshare (attempt ${attempt}/3):`,
+        postErr.response?.status,
+        postErr.response?.data || postErr.message
+      );
+      await sleep(250 * attempt);
+    }
+  }
+  console.error("❌ Exhausted retries for starting screenshare");
+}
+
+/**
+ * Fetch current output media for the active bot.
+ */
+export async function getCurrentOutputMedia(): Promise<
+  any[] | { methodNotAllowed: true } | null
+> {
+  if (!currentBotId) {
+    console.error(" No bot ID available for getCurrentOutputMedia");
+    return null;
+  }
+  try {
+    const resp = await axios.get(
       `${RECALL_API_URL}${currentBotId}/output_media/`,
-      {
-        kind: "webpage",
-        config: {
-          url: newUrl,
-        },
-      },
       {
         headers: {
           accept: "application/json",
-          "content-type": "application/json",
           Authorization: `Token ${RECALL_API_KEY}`,
         },
+        timeout: 5000,
       }
     );
-    console.log("▶ Streaming new webpage:", newUrl);
-    return response;
-  } catch (error: any) {
-    console.error("❌ Failed to start bot screenshare:");
-    console.error("❌ Error status:", error.response?.status);
-    console.error("❌ Error headers:", error.response?.headers);
-    console.error("❌ Error data:", error.response?.data);
-    console.error("❌ Error message:", error.message);
+    return Array.isArray(resp.data) ? resp.data : null;
+  } catch (e: any) {
+    if (e?.response?.status === 405) {
+      console.warn(
+        "ℹ️ Recall GET /output_media not allowed (405). Skipping confirmation polling."
+      );
+      return { methodNotAllowed: true } as const;
+    }
+    console.error(
+      "❌ Failed to fetch output media:",
+      e.response?.status,
+      e.response?.data || e.message
+    );
+    return null;
   }
+}
+
+function normalizeUrlForCompare(url: string): string {
+  try {
+    const u = new URL(url);
+    // Ignore cache-busting ts param if present
+    u.searchParams.delete("ts");
+    return u.toString();
+  } catch {
+    return url;
+  }
+}
+
+/**
+ * Poll Recall until the webpage output_media matches the expected URL (ignoring ts param).
+ */
+export async function waitForScreenshareUrl(
+  expectedUrl: string,
+  timeoutMs: number = 8000,
+  intervalMs: number = 400
+): Promise<boolean> {
+  const target = normalizeUrlForCompare(expectedUrl);
+  const end = Date.now() + timeoutMs;
+  while (Date.now() < end) {
+    const items = await getCurrentOutputMedia();
+    if ((items as any)?.methodNotAllowed) {
+      // Cannot confirm via GET; return false to allow fallback delay path
+      return false;
+    }
+    if (items && Array.isArray(items) && items.length) {
+      const current = items.find((m: any) => m?.kind === "webpage");
+      const currentUrl = current?.config?.url;
+      if (currentUrl && normalizeUrlForCompare(currentUrl) === target) {
+        return true;
+      }
+    }
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+  return false;
 }
 
 /**

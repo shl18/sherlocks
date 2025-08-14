@@ -14,6 +14,20 @@ interface ConversationContext {
   lastResponseTime: number;
 }
 
+// ===== Video Script Types =====
+export type VideoScriptSegment = {
+  id: string;
+  start_ms: number; // inclusive
+  end_ms: number; // exclusive
+  background_url: string;
+  narration: string;
+};
+
+export type VideoScript = {
+  total_duration_ms: number;
+  segments: VideoScriptSegment[];
+};
+
 interface BotState {
   isSpeaking: boolean;
   currentSpeechId: string | null;
@@ -58,47 +72,58 @@ function normalizeForIntent(input: string): string {
 
 function detectIntent(normalizedTranscript: string): string | null {
   const text = normalizeForIntent(normalizedTranscript);
-  if (
-    text.includes("hello") ||
-    text.includes("hi") ||
-    text.includes("hey") ||
-    text.includes("hey sai") ||
-    text.includes("hello all") ||
-    text.includes("hi all") ||
-    text.includes("hey all") ||
-    text.includes("hello everyone") ||
-    text.includes("hey everyone") ||
-    text.includes("good morning") ||
-    text.includes("good afternoon") ||
-    text.includes("good evening") ||
-    text.includes("how are you doing") ||
-    text.includes("whats up")
-  ) {
-    return "greeting";
-  }
 
-  if (
-    text.includes("who are you") ||
-    text.includes("what u do") ||
-    text.includes("what do you do") ||
-    text.includes("what you do") ||
-    text.includes("what are you") ||
-    text.includes("what is this") ||
-    text.includes("tell me about yourself") ||
-    text.includes("introduce yourself")
-  ) {
-    return "identity";
-  }
+  const matchesAny = (patterns: string[]): boolean => {
+    return patterns.some((p) => {
+      const escaped = p.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&");
+      const regex = new RegExp(`\\b${escaped}\\b`, "i");
+      return regex.test(text);
+    });
+  };
 
-  if (
-    text.includes("yes") ||
-    text.includes("ok") ||
-    text.includes("sure") ||
-    text.includes("thanks") ||
-    text.includes("bye")
-  ) {
-    return "short";
-  }
+  const greetingPhrases = [
+    "hello",
+    "hi",
+    "hey",
+    "hey sai",
+    "hello all",
+    "hi all",
+    "hey all",
+    "hello everyone",
+    "hey everyone",
+    "good morning",
+    "good afternoon",
+    "good evening",
+    "how are you doing",
+    "whats up",
+  ];
+  if (matchesAny(greetingPhrases)) return "greeting";
+
+  const helpPhrases = [
+    "help me",
+    "i need help",
+    "can you help",
+    "help with",
+    "need assistance",
+    "assist me",
+    "i need assistance",
+  ];
+  if (matchesAny(helpPhrases)) return "help";
+
+  const identityPhrases = [
+    "who are you",
+    "what u do",
+    "what do you do",
+    "what you do",
+    "what are you",
+    "what is this",
+    "tell me about yourself",
+    "introduce yourself",
+  ];
+  if (matchesAny(identityPhrases)) return "identity";
+
+  const shortAckWords = ["yes", "ok", "sure", "thanks", "bye"];
+  if (matchesAny(shortAckWords)) return "short";
 
   return null;
 }
@@ -312,61 +337,61 @@ export function forceResetBotState(): void {
   setBotProcessing(false);
 }
 
-export async function askDummyLLM(
-  transcript: string,
-  wasInterrupted: boolean = false
-): Promise<string | null> {
-  const normalizedTranscript = transcript.toLowerCase().trim();
-  console.log("🎧 Processing transcript:", transcript);
+// export async function askDummyLLM(
+//   transcript: string,
+//   wasInterrupted: boolean = false
+// ): Promise<string | null> {
+//   const normalizedTranscript = transcript.toLowerCase().trim();
+//   console.log("🎧 Processing transcript:", transcript);
 
-  if (wasInterrupted) {
-    console.log("🚫 Processing interrupted transcript - bypassing cooldowns");
-  }
+//   if (wasInterrupted) {
+//     console.log("🚫 Processing interrupted transcript - bypassing cooldowns");
+//   }
 
-  const intent = detectIntent(normalizedTranscript);
+//   const intent = detectIntent(normalizedTranscript);
 
-  if (!intent) {
-    console.log("No intent detected for this transcript");
-    return null;
-  }
+//   if (!intent) {
+//     console.log("No intent detected for this transcript");
+//     return null;
+//   }
 
-  console.log("Detected intent:", intent);
+//   console.log("Detected intent:", intent);
 
-  // Skip cooldown checks if this was an interruption
-  if (!wasInterrupted && !shouldRespond(intent)) {
-    return null;
-  }
+//   // Skip cooldown checks if this was an interruption
+//   if (!wasInterrupted && !shouldRespond(intent)) {
+//     return null;
+//   }
 
-  let reply: string | null = null;
+//   let reply: string | null = null;
 
-  switch (intent) {
-    case "greeting":
-      // Big reply
-      reply =
-        "Hello there! It’s an absolute pleasure to meet you today. My name is Sherlocks — your friendly, ever-curious, and always-ready AI assistant. Think of me as your knowledgeable companion, your brainstorming buddy, and your tireless problem-solver, all wrapped into one.  I hope your day has been nothing short of amazing so far, and if it hasn’t, well… maybe I can help turn it around. Whether you’re here to explore ideas, unravel mysteries, learn something new, get help with a tricky problem, or simply enjoy a good conversation, I’m ready and eager to dive right in with you. \n\n From answering your questions with precision and clarity, to offering a spark of inspiration when you need it most, my goal is simple: to make your life easier, brighter, and a little more interesting every time we interact.";
-      break;
-    case "identity":
-      // Medium reply
-      reply =
-        "I'm Sherlocks, an AI bot designed to help you with various questions and tasks. I can assist with information, have conversations, and try to be helpful in whatever way you need.";
-      break;
-    case "short":
-      // Small reply
-      reply = "Got it!";
-      break;
-    default:
-      console.log("No response defined for intent:", intent);
-      return null;
-  }
+//   switch (intent) {
+//     case "greeting":
+//       // Big reply
+//       reply =
+//         "Hello there! It’s an absolute pleasure to meet you today. My name is Sherlocks — your friendly, ever-curious, and always-ready AI assistant. Think of me as your knowledgeable companion, your brainstorming buddy, and your tireless problem-solver, all wrapped into one.  I hope your day has been nothing short of amazing so far, and if it hasn’t, well… maybe I can help turn it around. Whether you’re here to explore ideas, unravel mysteries, learn something new, get help with a tricky problem, or simply enjoy a good conversation, I’m ready and eager to dive right in with you. \n\n From answering your questions with precision and clarity, to offering a spark of inspiration when you need it most, my goal is simple: to make your life easier, brighter, and a little more interesting every time we interact.";
+//       break;
+//     case "identity":
+//       // Medium reply
+//       reply =
+//         "I'm Sherlocks, an AI bot designed to help you with various questions and tasks. I can assist with information, have conversations, and try to be helpful in whatever way you need.";
+//       break;
+//     case "short":
+//       // Small reply
+//       reply = "Got it!";
+//       break;
+//     default:
+//       console.log("No response defined for intent:", intent);
+//       return null;
+//   }
 
-  if (reply) {
-    updateConversationContext(intent);
-    console.log("LLM Response:", reply);
-    return reply;
-  }
+//   if (reply) {
+//     updateConversationContext(intent);
+//     console.log("LLM Response:", reply);
+//     return reply;
+//   }
 
-  return null;
-}
+//   return null;
+// }
 
 export async function askLLM(
   transcript: string,
@@ -383,13 +408,12 @@ export async function askLLM(
     const system =
       "You are Sherlocks, an SRE-focused incident triage assistant. Your job is to quickly identify likely root causes, impacted components, and immediate mitigations from short snippets of context. Be concise (1-3 sentences), action-oriented, and specific. Prefer concrete next steps (dashboards, logs to check, feature flags, rollbacks) over generic advice. If interrupted, prioritize the newest message.";
 
-    const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
+    const model = process.env.OPENAI_MODEL || "gpt-5-mini-2025-08-07";
 
     // Prefer the lightweight responses for latency
     const completion = await openaiClient.chat.completions.create({
       model,
-      temperature: 0.6,
-      max_tokens: 180,
+      max_completion_tokens: 180,
       messages: [
         { role: "system", content: system },
         {
@@ -480,12 +504,11 @@ export async function generateIncidentVideoScript(
       "Keep under 180 words. Use present tense. No greetings or closings.",
     ].join("\n");
 
-    const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
+    const model = process.env.OPENAI_MODEL || "gpt-5-mini-2025-08-07";
 
     const completion = await openaiClient.chat.completions.create({
       model,
-      temperature: 0.3,
-      max_tokens: 280,
+      max_completion_tokens: 280,
       messages: [
         { role: "system", content: system },
         { role: "user", content: prompt },
@@ -502,23 +525,241 @@ export async function generateIncidentVideoScript(
 }
 
 /**
- * Return true if the text is a greeting (hello/hi/etc.)
+ * Return true if the text is a greeting (hello/hi/etc.) or help request
  */
 export function isGreeting(text: string): boolean {
   const normalized = normalizeForIntent(text || "");
   const intent = detectIntent(normalized);
-  return intent === "greeting";
+  return intent === "greeting" || intent === "help";
 }
 
 /**
- * Provide a warm, concise greeting suitable for TTS.
+ * Provide a warm, concise greeting or help response suitable for TTS.
  */
-export function generateGreetingResponse(): string {
+export function generateGreetingResponse(text?: string): string {
+  const normalized = normalizeForIntent(text || "");
+  const intent = detectIntent(normalized);
+
+  if (intent === "help") {
+    return (
+      "I'm here to help! I can analyze incidents, debug issues, and provide guidance. " +
+      "You can share your screen by saying 'look at my screen', paste error logs, " +
+      "or just describe what's happening. What do you need assistance with?"
+    );
+  }
+
   return (
-    "Hello there! It’s wonderful to meet you. I’m Sherlocks — your friendly AI " +
-    "assistant. I’m here to help with incident triage, debugging, and anything " +
-    "else you need. Just tell me what’s going on, and we’ll tackle it together."
+    "Hello there! It's wonderful to meet you. I'm Sherlocks — your friendly AI " +
+    "assistant. I'm here to help with incident triage, debugging, and anything " +
+    "else you need. Just tell me what's going on, and we'll tackle it together."
   );
+}
+
+/**
+ * Generate a concise root-cause paragraph from raw incident alert text.
+ */
+export async function generateRootCauseParagraph(
+  incidentText: string
+): Promise<string | null> {
+  try {
+    if (!process.env.OPENAI_API_KEY) return null;
+    const prompt = incidentText?.trim();
+    if (!prompt) return null;
+
+    const system = [
+      "You are Sherlocks, an SRE root-cause summarizer.",
+      "Given alert text and notes, produce ONE concise paragraph (2-4 sentences)",
+      "with likely root cause, impacted components, and immediate mitigation.",
+      "Avoid bullet points. Keep under 80 words.",
+    ].join("\n");
+
+    const model = process.env.OPENAI_MODEL || "gpt-5-mini-2025-08-07";
+    const completion = await openaiClient.chat.completions.create({
+      model,
+      max_completion_tokens: 160,
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: prompt },
+      ],
+    });
+
+    const text = completion.choices?.[0]?.message?.content?.trim();
+    return text || null;
+  } catch (error) {
+    console.error("❌ OpenAI generateRootCauseParagraph error:", error);
+    return null;
+  }
+}
+
+/**
+ * Convert a paragraph into a structured video script JSON.
+ * The model MUST return strict JSON matching the VideoScript type.
+ */
+export async function generateStructuredVideoScript(
+  paragraph: string
+): Promise<VideoScript | null> {
+  try {
+    if (!process.env.OPENAI_API_KEY) return null;
+    const content = paragraph?.trim();
+    if (!content) return null;
+
+    const system = [
+      "You are a formatter that outputs ONLY strict JSON.",
+      "Given a short paragraph describing an incident's root cause,",
+      "produce a concise video script with 3-5 segments and total duration 10-20 seconds.",
+      "Schema:",
+      "{",
+      '  "total_duration_ms": number,',
+      '  "segments": [',
+      '    { "id": string, "start_ms": number, "end_ms": number, "background_url": string, "narration": string }',
+      "  ]",
+      "}",
+      "Constraints:",
+      "- start_ms >= 0, end_ms > start_ms, segments are contiguous without gaps",
+      "- narration is sized to fit the segment duration at ~12.5 chars/sec",
+      "- background_url should be a path tag like /github, /jenkins, /datadog, or /",
+      "- If a custom full URL is required, use a valid https URL",
+      "- DO NOT include any commentary, code fences, or text outside JSON",
+    ].join("\n");
+
+    const user = [
+      "Paragraph:",
+      content,
+      "",
+      "Background selection guidance:",
+      "- logs/metrics: /datadog",
+      "- deployments/builds: /jenkins",
+      "- code/PRs: /github",
+      "- default/home: /",
+    ].join("\n");
+
+    const model = process.env.OPENAI_MODEL || "gpt-5-mini-2025-08-07";
+    const completion = await openaiClient.chat.completions.create({
+      model,
+      max_completion_tokens: 500,
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: user },
+      ],
+    });
+    const raw = completion.choices?.[0]?.message?.content?.trim();
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as VideoScript;
+
+    // Basic validation
+    if (
+      !parsed?.segments?.length ||
+      typeof parsed.total_duration_ms !== "number"
+    ) {
+      return null;
+    }
+    return parsed;
+  } catch (error) {
+    console.error("❌ OpenAI generateStructuredVideoScript error:", error);
+    return null;
+  }
+}
+
+/**
+ * High-level pipeline: incident text → root cause paragraph → structured video script.
+ */
+export async function runIncidentVideoScriptPipeline(
+  incidentText: string
+): Promise<{ paragraph: string; script: VideoScript } | null> {
+  let paragraph = await generateRootCauseParagraph(incidentText);
+  if (!paragraph) {
+    // Fallback heuristic paragraph
+    const snippet = incidentText.trim().slice(0, 240).replace(/\s+/g, " ");
+    paragraph =
+      "Likely CPU saturation in the reported service aligned with the alert window. " +
+      "Mitigate by scaling replicas, profiling hot paths, and reviewing the most recent deployment. Context: " +
+      snippet;
+  }
+  let script = await generateStructuredVideoScript(paragraph);
+  if (!script) {
+    // Fallback heuristic script
+    const segments: VideoScriptSegment[] = [
+      {
+        id: "intro",
+        start_ms: 0,
+        end_ms: 4000,
+        background_url: "/datadog",
+        narration:
+          "Critical incident detected. Metrics indicate sustained resource pressure around the alert window.",
+      },
+      {
+        id: "deploy",
+        start_ms: 4000,
+        end_ms: 8000,
+        background_url: "/jenkins",
+        narration:
+          "Check the most recent deployment near the alert time for CPU heavy changes and roll back if needed.",
+      },
+      {
+        id: "code",
+        start_ms: 8000,
+        end_ms: 12000,
+        background_url: "/github",
+        narration:
+          "Review the latest commit and related PRs. Profile hot endpoints and reduce compute hotspots.",
+      },
+    ];
+    script = { total_duration_ms: 12000, segments };
+  }
+  return { paragraph, script };
+}
+
+/**
+ * OCR-like extraction using OpenAI vision: summarize on-screen errors/logs.
+ * Input is a PNG/JPEG base64 string without data URL prefix.
+ */
+export async function summarizeFromImageBase64(
+  base64Image: string
+): Promise<string | null> {
+  try {
+    if (!process.env.OPENAI_API_KEY) return null;
+    const b64 = base64Image?.trim();
+    if (!b64) return null;
+
+    // Use Chat Completions with image input (o4-mini or gpt-4o-mini)
+    const model =
+      process.env.OPENAI_VISION_MODEL ||
+      process.env.OPENAI_MODEL ||
+      "gpt-5-mini-2025-08-07";
+    const system =
+      "You are Sherlocks. Extract key error messages, stack traces, metrics, and service names from the screenshot. Return a concise paragraph (<=80 words) suitable for incident triage.";
+
+    const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
+      { role: "system", content: system },
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: "Analyze this screen and summarize the likely issue and what to check next.",
+          },
+          {
+            type: "image_url",
+            image_url: {
+              url: `data:image/png;base64,${b64}`,
+            },
+          },
+        ],
+      },
+    ];
+
+    const completion = await openaiClient.chat.completions.create({
+      model,
+      max_completion_tokens: 160,
+      messages,
+    });
+    const text = completion.choices?.[0]?.message?.content?.trim();
+    return text || null;
+  } catch (error) {
+    console.error("❌ summarizeFromImageBase64 error:", error);
+    return null;
+  }
 }
 
 /**

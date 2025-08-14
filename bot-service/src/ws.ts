@@ -12,8 +12,19 @@ import {
   generateIncidentVideoScript,
   isGreeting,
   generateGreetingResponse,
+  runIncidentVideoScriptPipeline,
+  VideoScript,
+  summarizeFromImageBase64,
 } from "./llm";
-import { sendAudioToBot, stopBotAudio } from "./recall";
+import { sendAudioToBot, stopBotAudio, waitForScreenshareUrl } from "./recall";
+import {
+  resolveBackgroundUrl,
+  SCREEN_OCR,
+  SCREEN_OCR_PHRASES,
+  USE_EMBEDDED_SCRIPT,
+  buildScreenshareUrlWithScript,
+} from "./constants";
+import { switchScreenshare } from "./recall";
 
 type TranscriptDataEvent = {
   event: "transcript.data";
@@ -310,6 +321,89 @@ async function speakInChunks(
   }
 }
 
+// ===== Video Script Playback =====
+// Serialize screenshare switches to avoid overlapping DELETE/POST calls
+let screenshareSwitchChain: Promise<void> = Promise.resolve();
+
+function queueScreenshareSwitch(url: string): Promise<void> {
+  screenshareSwitchChain = screenshareSwitchChain.then(async () => {
+    try {
+      await switchScreenshare(url);
+      // Wait until Recall confirms the webpage is set, or time out gracefully
+      const ok = await waitForScreenshareUrl(url, 8000, 400);
+      if (!ok) {
+        console.warn(
+          "⚠️ Screenshare URL did not confirm in time; proceeding anyway"
+        );
+        // Fallback delay to give Meet a chance to render
+        await sleep(1200);
+      }
+    } catch (e) {
+      console.error("❌ queueScreenshareSwitch error:", e);
+    }
+  });
+  return screenshareSwitchChain;
+}
+
+async function playVideoScript(script: VideoScript): Promise<void> {
+  // If enabled, start a single-stream screenshare with embedded script instructions
+  if (USE_EMBEDDED_SCRIPT) {
+    try {
+      const url = buildScreenshareUrlWithScript(script as any);
+      await queueScreenshareSwitch(url);
+    } catch (e) {
+      console.error("❌ Failed to start embedded-script screenshare:", e);
+    }
+  }
+
+  // Speak each segment; if not embedded, switch backgrounds per segment
+  for (const segment of script.segments) {
+    if (!segment?.narration) continue;
+    if (!USE_EMBEDDED_SCRIPT && segment.background_url) {
+      try {
+        // Accept full URLs or shorthand tags like /github, /jerkin, /datadog
+        const resolved = resolveBackgroundUrl(segment.background_url);
+        await queueScreenshareSwitch(resolved);
+      } catch (e) {
+        console.error("❌ Failed to switch background:", e);
+      }
+    }
+    const generationId = newTtsGenerationId();
+    await speakInChunks(segment.narration, generationId, "chat");
+  }
+}
+
+// ===== Screen OCR Session State =====
+let isScreenOcrActive = SCREEN_OCR.enabledByDefault;
+let lastScreenOcrTs = 0;
+let screenOcrSessionEndsAt = 0;
+
+function matchesAny(text: string, phrases: string[]): boolean {
+  const t = (text || "").toLowerCase();
+  return phrases.some((p) => t.includes(p));
+}
+
+function maybeStartScreenOcrSession(triggerText: string): string | null {
+  if (matchesAny(triggerText, SCREEN_OCR_PHRASES.start)) {
+    isScreenOcrActive = true;
+    lastScreenOcrTs = 0;
+    screenOcrSessionEndsAt = Date.now() + SCREEN_OCR.sessionTimeoutMs;
+    console.log(
+      "🔎 Screen OCR session started for",
+      SCREEN_OCR.sessionTimeoutMs,
+      "ms"
+    );
+    return "I'm now analyzing your screen. I'll look for errors, logs, and any issues I can help debug. Share your screen if you haven't already.";
+  }
+  if (matchesAny(triggerText, SCREEN_OCR_PHRASES.stop)) {
+    isScreenOcrActive = false;
+    screenOcrSessionEndsAt = 0;
+    console.log("🛑 Screen OCR session stopped by user");
+    return "Screen analysis stopped. Let me know if you need anything else!";
+  }
+  return null;
+}
+
 async function processTextWithLLM(
   text: string,
   source: "transcript" | "chat"
@@ -353,10 +447,19 @@ async function processTextWithLLM(
 
     // 1) Greeting takes priority for a warm welcome
     if (isGreeting(text)) {
-      reply = generateGreetingResponse();
+      reply = generateGreetingResponse(text);
     } else if (shouldGenerateVideoScript(text)) {
-      // 2) Incident payload → Video Script
-      reply = await generateIncidentVideoScript(text);
+      // 2) Full pipeline: root cause → structured video script → playback
+      const pipeline = await runIncidentVideoScriptPipeline(text);
+      if (pipeline?.script) {
+        // Avoid speaking an intro line that could collide with first segment
+        reply = null;
+        // Kick off playback asynchronously
+        void playVideoScript(pipeline.script);
+      } else {
+        // Fallback: unstructured video script text
+        reply = await generateIncidentVideoScript(text);
+      }
     } else {
       // 3) Default short incident triage reply
       reply = await askLLM(text, wasInterrupted);
@@ -419,7 +522,14 @@ wss.on("connection", (ws) => {
 
         // Process the transcript if we have text
         if (transcriptText?.trim()) {
-          await processTextWithLLM(transcriptText, "transcript");
+          // Try toggling OCR session from transcript commands
+          const ocrResponse = maybeStartScreenOcrSession(transcriptText);
+          if (ocrResponse) {
+            // Provide immediate feedback for OCR session changes
+            await processTextWithLLM(ocrResponse, "transcript");
+          } else {
+            await processTextWithLLM(transcriptText, "transcript");
+          }
         } else {
           console.log("⏭️ Skipping empty transcript");
         }
@@ -444,7 +554,14 @@ wss.on("connection", (ws) => {
 
         // Process the chat message if we have text
         if (chatData.text?.trim()) {
-          await processTextWithLLM(chatData.text, "chat");
+          // Try toggling OCR session from chat commands
+          const ocrResponse = maybeStartScreenOcrSession(chatData.text);
+          if (ocrResponse) {
+            // Provide immediate feedback for OCR session changes
+            await processTextWithLLM(ocrResponse, "chat");
+          } else {
+            await processTextWithLLM(chatData.text, "chat");
+          }
         } else {
           console.log("⏭️ Skipping empty chat message");
         }
@@ -501,6 +618,44 @@ wss.on("connection", (ws) => {
         } catch (saveErr) {
           console.error("❌ Failed to save received image frame:", saveErr);
         }
+
+        // Opportunistic OCR if active, throttled, and only for screenshare
+        try {
+          const now = Date.now();
+          const active =
+            isScreenOcrActive &&
+            (screenOcrSessionEndsAt === 0 || now < screenOcrSessionEndsAt);
+
+          // Only process screenshare frames, not webcam
+          if (
+            active &&
+            type === "screenshare" &&
+            now - lastScreenOcrTs >= SCREEN_OCR.throttleMs
+          ) {
+            lastScreenOcrTs = now;
+            const base64Data = buffer.startsWith("data:")
+              ? buffer.split(",")[1] || ""
+              : buffer;
+            console.log("🖼️ Processing screenshare frame for OCR...");
+            const summary = await summarizeFromImageBase64(base64Data);
+            if (summary?.trim()) {
+              console.log("🖼️ OCR Summary:", summary);
+              // Feed into LLM routing for narration and possible video script
+              await processTextWithLLM(summary, "transcript");
+            } else {
+              console.log("🖼️ No meaningful content detected in screenshare");
+            }
+          }
+
+          // Auto-stop session after timeout
+          if (screenOcrSessionEndsAt && now >= screenOcrSessionEndsAt) {
+            isScreenOcrActive = false;
+            screenOcrSessionEndsAt = 0;
+            console.log("⌛ Screen OCR session auto-stopped after timeout");
+          }
+        } catch (ocrErr) {
+          console.error("❌ Screen OCR processing error:", ocrErr);
+        }
       } else {
         console.log(`❓ Unhandled event type: ${wsMessage.event}`);
       }
@@ -522,5 +677,5 @@ console.log(
   "📡 Ready to receive transcript events from Recall AI via WebSocket"
 );
 console.log(
-  "💡 Make sure your ngrok WebSocket URL is: wss://6fad6a2e0355.ngrok-free.app"
+  "💡 Make sure your ngrok WebSocket URL is: wss://13798a9d8d7c.ngrok-free.app"
 );
