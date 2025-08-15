@@ -12,6 +12,9 @@ import {
   generateIncidentVideoScript,
   isGreeting,
   generateGreetingResponse,
+  getIntentForText,
+  generateIdentityResponse,
+  generateShortAckResponse,
   runIncidentVideoScriptPipeline,
   VideoScript,
   summarizeFromImageBase64,
@@ -358,6 +361,11 @@ async function playVideoScript(script: VideoScript): Promise<void> {
 
   // Speak each segment; if not embedded, switch backgrounds per segment
   for (const segment of script.segments) {
+    // If a new user input started processing, abort remaining segments
+    if (isCurrentlyProcessing) {
+      console.log("🛑 Aborting video script playback due to new input");
+      break;
+    }
     if (!segment?.narration) continue;
     if (!USE_EMBEDDED_SCRIPT && segment.background_url) {
       try {
@@ -370,6 +378,11 @@ async function playVideoScript(script: VideoScript): Promise<void> {
     }
     const generationId = newTtsGenerationId();
     await speakInChunks(segment.narration, generationId, "chat");
+    // If cancelled mid-segment, stop the rest of the script
+    if (hasGenerationBeenCancelled(generationId) || isCurrentlyProcessing) {
+      console.log("🛑 Video script playback cancelled/interrupted");
+      break;
+    }
   }
 }
 
@@ -408,12 +421,11 @@ async function processTextWithLLM(
   text: string,
   source: "transcript" | "chat"
 ): Promise<void> {
-  // Prevent multiple concurrent processing
-  if (isCurrentlyProcessing) {
-    console.log(
-      `⏭️ Skipping ${source} processing - already processing another request`
-    );
-    return;
+  // Allow preemption: do NOT return early. If something is already
+  // processing or speaking, we will interrupt it below.
+  const wasPreempting = isCurrentlyProcessing;
+  if (wasPreempting) {
+    console.log(`⚡ Preempting ongoing processing with new ${source} input`);
   }
 
   const processingId = `proc_${Date.now()}_${Math.random()
@@ -424,9 +436,6 @@ async function processTextWithLLM(
     isCurrentlyProcessing = true;
     currentProcessingId = processingId;
     console.log(`🧠 Processing ${source} text with LLM: "${text}"`);
-
-    // Mark bot as processing
-    setBotProcessing(true);
 
     // Check for interruption - if user speaks while bot is talking
     const wasInterrupted = handleInterruption(text);
@@ -442,6 +451,9 @@ async function processTextWithLLM(
       forceResetBotState();
       currentProcessingId = processingId;
     }
+
+    // Now mark this turn as processing after clearing any old state
+    setBotProcessing(true);
 
     let reply: string | null = null;
 
@@ -463,7 +475,23 @@ async function processTextWithLLM(
     } else {
       // 3) Default short incident triage reply
       reply = await askLLM(text, wasInterrupted);
+
+      // Deterministic fallbacks when LLM yields nothing, especially after interruption
+      if (!reply) {
+        const intent = getIntentForText(text);
+        if (intent === "identity") {
+          reply = generateIdentityResponse();
+        } else if (intent === "short") {
+          reply = generateShortAckResponse();
+        }
+      }
     }
+    // If another newer request superseded this one while awaiting LLM, drop it
+    if (currentProcessingId !== processingId) {
+      console.log("🧵 Discarding stale LLM result due to newer input");
+      reply = null;
+    }
+
     if (reply) {
       console.log(`🤖 LLM Reply for ${source}:`, reply);
 
@@ -574,14 +602,6 @@ wss.on("connection", (ws) => {
         const botId = videoEvent.data.bot.id;
         const recordingId = videoEvent.data.recording.id;
 
-        // console.log(`🎥 Video Event: "${buffer}"`);
-        // console.log(`🔍 Speaker: ${participant.name}`);
-        // console.log(`🔍 Is host: ${participant.is_host}`);
-        // console.log(`🔍 Type: ${type}`);
-        // console.log(`🔍 Timestamp: ${timestamp.absolute}`);
-        // console.log(`🔍 Bot ID: ${botId}`);
-        // console.log(`🔍 Recording ID: ${recordingId}`);
-
         // Persist the received image to the "upload" folder
         try {
           const uploadDir = path.resolve(__dirname, "..", "upload");
@@ -611,15 +631,10 @@ wss.on("connection", (ws) => {
           const filePath = path.join(uploadDir, filename);
 
           await fs.promises.writeFile(filePath, imageBuffer);
-          // console
-          //   .log
-          //   // `💾 Saved frame to ${filePath} (${imageBuffer.length} bytes)`
-          //   ();
         } catch (saveErr) {
           console.error("❌ Failed to save received image frame:", saveErr);
         }
 
-        // Opportunistic OCR if active, throttled, and only for screenshare
         try {
           const now = Date.now();
           const active =

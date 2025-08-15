@@ -128,6 +128,14 @@ function detectIntent(normalizedTranscript: string): string | null {
   return null;
 }
 
+/**
+ * Public helper to get coarse intent from raw text
+ */
+export function getIntentForText(text: string): string | null {
+  const normalized = normalizeForIntent(text || "");
+  return detectIntent(normalized);
+}
+
 //Check if we should respond based on conversation context
 function shouldRespond(intent: string): boolean {
   const now = Date.now();
@@ -553,6 +561,24 @@ export function generateGreetingResponse(text?: string): string {
     "assistant. I'm here to help with incident triage, debugging, and anything " +
     "else you need. Just tell me what's going on, and we'll tackle it together."
   );
+}
+
+/**
+ * Provide a concise identity description suitable for TTS.
+ */
+export function generateIdentityResponse(): string {
+  return (
+    "I'm Sherlocks — an SRE-focused assistant. I quickly triage incidents, " +
+    "summarize errors, and suggest next actions like dashboards, logs, and rollbacks. " +
+    "Tell me what you're seeing, or share your screen, and I'll help you debug."
+  );
+}
+
+/**
+ * Short acknowledgement for brief inputs
+ */
+export function generateShortAckResponse(): string {
+  return "Got it!";
 }
 
 /**
