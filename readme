@@ -1,0 +1,91 @@
+still same
+lets assume there is the alert
+Prometheus alert: checkout_service_p95_latency_seconds > 2s for 5m
+
+we create hypthetical root cause for this
+and after all this we get 
+strcuture rca like this 
+Incident RCA – checkout_service_p95_latency_seconds > 2s for 5m
+1. What All We Checked
+Service Metrics
+
+checkout_service_p95_latency_seconds – rose from 600ms → 4.5s in 15 minutes.
+
+checkout_service_error_rate (5xx) – remained under 0.5%, indicating slowness without widespread failures.
+
+Database Metrics (PostgreSQL RDS)
+
+db_connections_used – 95% of max_connections limit.
+
+pg_stat_activity – large number of queries in active state for coupons table.
+
+Average query execution time for SELECT ... FROM coupons – 2.8s (previously ~20ms).
+
+External Payment Gateway Metrics
+
+payment_gateway_latency – stable at ~300ms.
+
+No spike in errors or timeouts from gateway logs.
+
+Infrastructure
+
+CPU utilization on checkout service pods – ~70%, slightly elevated but not pegged.
+
+Pod restarts – none in the last 24h.
+
+Network latency between app pods and DB – within normal (<3ms).
+
+Deployment History
+
+Last deploy: v2.14.3 at 14:05 UTC (18 minutes before alert fired).
+
+Change included promotional discount calculation requiring extra DB lookup.
+
+2. What Seemed OK
+Payment Gateway: Latency and error rates were stable → not the bottleneck.
+
+Network: No increase in RTT between app and DB.
+
+Infra Resources: CPU, memory, network usage all within thresholds.
+
+Error Rate: Low, meaning requests eventually succeeded, just slowly.
+
+3. What Did Not Seem OK
+DB Connection Pool Saturation:
+
+Active connections at 95% capacity.
+
+Queries queueing in connection pool.
+
+Slow Query on coupons Table:
+
+No index on coupon_validity.
+
+Full table scans on 15M+ row table.
+
+Average query time jumped from 20ms → 2.8s.
+
+Correlation with Deployment:
+
+Issue began within 15 minutes after v2.14.3 deploy.
+
+New feature in deploy matches the table being overloaded.
+
+4. Final Conclusion
+The spike in checkout service p95 latency was caused by a non-indexed database query introduced in v2.14.3.
+The query (SELECT ... FROM coupons WHERE coupon_validity >= NOW() AND user_id = ?) caused full table scans on a large coupons table, quickly consuming almost all available DB connections.
+This saturation slowed all queries to the DB, including critical payment lookups, pushing p95 latency above the 2s threshold.
+
+5. Data Points & Metrics
+Metric	Before Incident	During Incident	After Fix
+checkout_service_p95_latency_seconds	0.6s	4.5s	0.5s
+checkout_service_error_rate_5xx	0.2%	0.4%	0.2%
+db_connections_used	70% of max	95% of max	65% of max
+Avg coupons query time	20ms	2.8s	15ms
+Payment gateway latency	300ms	310ms	300ms
+
+It will be dnamic incident i want
+
+
+
+i want the videoscript we are getting the audiotext should be dynamic and bigger should able to understand this cause properly

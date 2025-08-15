@@ -3,6 +3,7 @@ import * as fs from "fs";
 import * as path from "path";
 import {
   askLLM,
+  askLLMWithRetries,
   textToSpeech,
   handleInterruption,
   startBotSpeaking,
@@ -510,21 +511,41 @@ async function processTextWithLLM(
       // 2) Full pipeline: root cause → structured video script → playback
       const pipeline = await runIncidentVideoScriptPipeline(text);
       if (pipeline?.script) {
-        // Short acknowledgement before starting the guided screenshare
-        const ack = "Sharing a quick incident walkthrough and screenshare now.";
-        const generationId = newTtsGenerationId();
-        await speakInChunks(ack, generationId, source);
-        // Start playback asynchronously after the ack
-        void playVideoScript(pipeline.script);
-        // Consider this handled; avoid duplicative reply
-        reply = null;
+        // Safety: require at least one non-empty narration segment
+        const hasNarration = Array.isArray(pipeline.script.segments)
+          ? pipeline.script.segments.some(
+              (s) =>
+                typeof s?.narration === "string" &&
+                s.narration.trim().length > 0
+            )
+          : false;
+        if (!hasNarration) {
+          // Fall back to LLM triage reply; skip video playback
+          reply = await askLLMWithRetries(text, wasInterrupted);
+        } else {
+          // Short acknowledgement before starting the guided screenshare
+          const ack =
+            "Sharing a quick incident walkthrough and screenshare now.";
+          const generationId = newTtsGenerationId();
+          await speakInChunks(ack, generationId, source);
+          // Start playback asynchronously after the ack
+          void playVideoScript(pipeline.script);
+          // Consider this handled; avoid duplicative reply
+          reply = null;
+        }
       } else {
         // Fallback: unstructured video script text
         reply = await generateIncidentVideoScript(text);
+        // If that also fails, fall back to a concise triage reply so we don't go silent
+        if (!reply) {
+          reply = await askLLMWithRetries(text, wasInterrupted);
+        }
       }
     } else {
       // 3) Default short incident triage reply
-      reply = await askLLM(text, wasInterrupted);
+      reply = await askLLMWithRetries(text, wasInterrupted);
+
+      // All content must be LLM-generated; avoid heuristic static messages
 
       // Deterministic fallbacks when LLM yields nothing, especially after interruption
       if (!reply) {
@@ -536,10 +557,10 @@ async function processTextWithLLM(
         }
       }
     }
-    // If another newer request superseded this one while awaiting LLM, drop it
+    // If another newer request superseded this one while awaiting LLM, drop quietly
     if (currentProcessingId !== processingId) {
       console.log("🧵 Discarding stale LLM result due to newer input");
-      reply = null;
+      return; // Exit early; newer turn will handle response
     }
 
     if (reply) {
@@ -550,7 +571,7 @@ async function processTextWithLLM(
       // Fire and forget so we don't block receiving further transcripts
       void speakInChunks(reply, generationId, source);
     } else {
-      console.log(`🤖 LLM: No response generated for ${source}`);
+      console.log(`🤖 LLM returned empty result for ${source}`);
     }
   } catch (error) {
     console.error(`❌ LLM processing error for ${source}:`, error);

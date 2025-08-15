@@ -55,6 +55,12 @@ export const BACKGROUND_ROUTES: Record<string, string> = {
   jerkin: "/jenkins", // common typo alias
   datadog: "/datadog",
   grafana: "/datadog", // map grafana tag to same route if you prefer
+  kubernetes: "/kubernetes",
+  k8s: "/kubernetes",
+  rds: "/rds",
+  db: "/rds",
+  database: "/rds",
+  redis: "/redis",
   // aliases
   logs: "/datadog",
   pr: "/github",
@@ -94,6 +100,10 @@ function viewFromBackgroundUrl(pathOrTag: string): string {
   if (key.includes("github")) return "github";
   if (key.includes("jenkins")) return "jenkins";
   if (key.includes("datadog") || key.includes("grafana")) return "grafana"; // map datadog/grafana as needed
+  if (key.includes("kubernetes") || key.includes("k8s")) return "kubernetes";
+  if (key.includes("redis")) return "redis";
+  if (key.includes("rds") || key.includes("database") || key.includes("db"))
+    return "rds";
   return "home";
 }
 

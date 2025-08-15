@@ -61,6 +61,50 @@ const SAME_INTENT_COOLDOWN = 6000;
 // Average word length: ~5 characters, so roughly 12.5 characters per second
 const CHARACTERS_PER_SECOND = 12.5;
 
+// -------- JSON extraction helper (when model returns extra text) --------
+function extractFirstJsonObject(
+  text: string | undefined | null
+): string | null {
+  if (!text) return null;
+  // Try to find the first well-formed top-level JSON object
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start >= 0 && end > start) {
+    const candidate = text.slice(start, end + 1);
+    try {
+      JSON.parse(candidate);
+      return candidate;
+    } catch {
+      // try to progressively shrink from the end
+      for (let i = end; i > start; i--) {
+        const c = text.slice(start, i);
+        try {
+          JSON.parse(c);
+          return c;
+        } catch {
+          /* keep trying */
+        }
+      }
+    }
+  }
+  return null;
+}
+
+// Detects a structured RCA write-up with common section headings
+function isStructuredRcaText(text: string): boolean {
+  const t = (text || "").toLowerCase();
+  const markers = [
+    "incident rca",
+    "what all we checked",
+    "what did not seem ok",
+    "final conclusion",
+    "deployment history",
+    "database metrics",
+    "service metrics",
+  ];
+  return markers.some((m) => t.includes(m));
+}
+
 function normalizeForIntent(input: string): string {
   // Lowercase, strip punctuation, collapse excessive repeated letters, compact spaces
   const lower = input.toLowerCase();
@@ -416,7 +460,7 @@ export async function askLLM(
     const system =
       "You are Sherlocks, an SRE-focused incident triage assistant. Your job is to quickly identify likely root causes, impacted components, and immediate mitigations from short snippets of context. Be concise (1-3 sentences), action-oriented, and specific. Prefer concrete next steps (dashboards, logs to check, feature flags, rollbacks) over generic advice. If interrupted, prioritize the newest message.";
 
-    const model = process.env.OPENAI_MODEL || "gpt-5-2025-08-07";
+    const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
 
     // Prefer the lightweight responses for latency
     const completion = await openaiClient.chat.completions.create({
@@ -443,6 +487,58 @@ export async function askLLM(
 }
 
 /**
+ * Ask LLM with retries and alternate prompts to avoid empty responses.
+ * Still 100% LLM-generated; no static text.
+ */
+export async function askLLMWithRetries(
+  incidentText: string,
+  wasInterrupted: boolean = false
+): Promise<string | null> {
+  // First attempt
+  let reply = await askLLM(incidentText, wasInterrupted);
+  if (reply) return reply;
+
+  // Second attempt: slightly stronger instruction appended to user content
+  try {
+    if (!process.env.OPENAI_API_KEY) return null;
+    const prompt = (incidentText || "").trim();
+    if (!prompt) return null;
+    const system =
+      "You are Sherlocks, an SRE-focused incident triage assistant. Provide a concrete, actionable triage reply in 2-4 sentences.";
+    const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
+    const completion = await openaiClient.chat.completions.create({
+      model,
+      max_completion_tokens: 200,
+      messages: [
+        { role: "system", content: system },
+        {
+          role: "user",
+          content:
+            (wasInterrupted
+              ? `${prompt}\n\n[Prioritize this request (interruption)]\n`
+              : prompt) +
+            "\n\nRespond with specific likely cause(s) and next actions. Do not omit the answer.",
+        },
+      ],
+    });
+    reply = completion.choices?.[0]?.message?.content?.trim() || null;
+    if (reply) return reply;
+  } catch (e) {
+    console.error("❌ askLLMWithRetries second-attempt error:", e);
+  }
+
+  // Third attempt: derive a root-cause paragraph and use it directly
+  try {
+    const paragraph = await generateRootCauseParagraph(incidentText);
+    if (paragraph) return paragraph;
+  } catch (e) {
+    console.error("❌ askLLMWithRetries paragraph fallback error:", e);
+  }
+
+  return null;
+}
+
+/**
  * Detect whether the provided text looks like an incident/alert payload
  * and should be reformatted into a narrated "Video Script" summary.
  */
@@ -452,6 +548,7 @@ export function shouldGenerateVideoScript(text: string): boolean {
   const markers = [
     "video script",
     "alert",
+    "rca",
     "critical",
     "5xx",
     "runbook",
@@ -464,10 +561,21 @@ export function shouldGenerateVideoScript(text: string): boolean {
     "jenkins",
     "load average",
     "rds",
+    "postgresql",
     "replica",
     "environment",
     "investigation summary",
     "recommended actions",
+    // DB / latency specific markers
+    "postgres",
+    "database",
+    "pg_stat_activity",
+    "slow query",
+    "query execution",
+    "max_connections",
+    "latency",
+    "p95",
+    "active state",
   ];
   return markers.some((m) => t.includes(m));
 }
@@ -509,10 +617,10 @@ export async function generateIncidentVideoScript(
       "",
       "At the end, add 3-5 bullets listing sources checked or to check next.",
       "When details are missing, infer cautiously and mark as 'likely'.",
-      "Keep under 180 words. Use present tense. No greetings or closings.",
+      "Keep under 220 words. Use present tense. No greetings or closings.",
     ].join("\n");
 
-    const model = process.env.OPENAI_MODEL || "gpt-5-2025-08-07";
+    const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
 
     const completion = await openaiClient.chat.completions.create({
       model,
@@ -523,9 +631,23 @@ export async function generateIncidentVideoScript(
       ],
     });
 
-    const text = completion.choices?.[0]?.message?.content?.trim();
-    if (!text) return null;
-    return text;
+    let text = completion.choices?.[0]?.message?.content?.trim();
+    if (!text) {
+      // Retry with a stronger prompt asking to not omit the answer
+      const completion2 = await openaiClient.chat.completions.create({
+        model,
+        max_completion_tokens: 320,
+        messages: [
+          { role: "system", content: system },
+          {
+            role: "user",
+            content: `${prompt}\n\nDo not omit the answer. Provide the full narrated script as requested.`,
+          },
+        ],
+      });
+      text = completion2.choices?.[0]?.message?.content?.trim();
+    }
+    return text || null;
   } catch (error) {
     console.error("❌ OpenAI generateIncidentVideoScript error:", error);
     return null;
@@ -599,7 +721,7 @@ export async function generateRootCauseParagraph(
       "Avoid bullet points. Keep under 80 words.",
     ].join("\n");
 
-    const model = process.env.OPENAI_MODEL || "gpt-5-2025-08-07";
+    const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
     const completion = await openaiClient.chat.completions.create({
       model,
       max_completion_tokens: 160,
@@ -622,7 +744,8 @@ export async function generateRootCauseParagraph(
  * The model MUST return strict JSON matching the VideoScript type.
  */
 export async function generateStructuredVideoScript(
-  paragraph: string
+  paragraph: string,
+  incidentText?: string
 ): Promise<VideoScript | null> {
   try {
     if (!process.env.OPENAI_API_KEY) return null;
@@ -631,8 +754,8 @@ export async function generateStructuredVideoScript(
 
     const system = [
       "You are a formatter that outputs ONLY strict JSON.",
-      "Given a short paragraph describing an incident's root cause,",
-      "produce a concise video script with 3-5 segments and total duration 10-20 seconds.",
+      "Given incident context, produce a detailed video walkthrough script.",
+      "Aim for 5-7 segments and total duration between 25-45 seconds to allow longer narration.",
       "Schema:",
       "{",
       '  "total_duration_ms": number,',
@@ -642,24 +765,37 @@ export async function generateStructuredVideoScript(
       "}",
       "Constraints:",
       "- start_ms >= 0, end_ms > start_ms, segments are contiguous without gaps",
-      "- narration is sized to fit the segment duration at ~12.5 chars/sec",
-      "- background_url should be a path tag like /github, /jenkins, /datadog, or /",
+      "- narration should be rich and specific, sized to fit segment duration at ~12.5 chars/sec",
+      "- background_url should be a path tag like /github, /jenkins, /datadog, /kubernetes, /rds, /redis, or /",
       "- If a custom full URL is required, use a valid https URL",
       "- DO NOT include any commentary, code fences, or text outside JSON",
     ].join("\n");
 
     const user = [
-      "Paragraph:",
+      "Root-cause paragraph:",
       content,
+      incidentText ? "" : "",
+      incidentText ? "Incident text:" : "",
+      incidentText ? incidentText.trim() : "",
       "",
       "Background selection guidance:",
       "- logs/metrics: /datadog",
       "- deployments/builds: /jenkins",
       "- code/PRs: /github",
+      "- kubernetes: /kubernetes",
+      "- databases: /rds",
+      "- caches/queues: /redis",
       "- default/home: /",
+      "",
+      "Narrative guidance:",
+      "- Begin with the alert summary and time window",
+      "- Explain observations and likely cause",
+      "- Call out specific signals, dashboards, and changes tied to the context",
+      "- Give actionable next steps and mitigation",
+      "- Keep the narration continuous and easy to voice over",
     ].join("\n");
 
-    const model = process.env.OPENAI_MODEL || "gpt-5-2025-08-07";
+    const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
     const completion = await openaiClient.chat.completions.create({
       model,
       max_completion_tokens: 500,
@@ -669,9 +805,11 @@ export async function generateStructuredVideoScript(
         { role: "user", content: user },
       ],
     });
-    const raw = completion.choices?.[0]?.message?.content?.trim();
+    let raw = completion.choices?.[0]?.message?.content?.trim();
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as VideoScript;
+    // Some models may prepend/append text; try to extract JSON
+    const jsonOnly = extractFirstJsonObject(raw) || raw;
+    const parsed = JSON.parse(jsonOnly) as VideoScript;
 
     // Basic validation
     if (
@@ -688,11 +826,162 @@ export async function generateStructuredVideoScript(
 }
 
 /**
+ * Generate a structured video script directly from raw incident text.
+ */
+async function generateStructuredVideoScriptFromIncident(
+  incidentText: string
+): Promise<VideoScript | null> {
+  try {
+    if (!process.env.OPENAI_API_KEY) return null;
+    const content = incidentText?.trim();
+    if (!content) return null;
+
+    const system = [
+      "You are a formatter that outputs ONLY strict JSON.",
+      "Given an incident alert or investigation notes, produce a detailed video walkthrough script.",
+      "Aim for 5-7 segments and total duration between 25-45 seconds to allow longer narration.",
+      "Schema:",
+      "{",
+      '  "total_duration_ms": number,',
+      '  "segments": [',
+      '    { "id": string, "start_ms": number, "end_ms": number, "background_url": string, "narration": string }',
+      "  ]",
+      "}",
+      "Constraints:",
+      "- start_ms >= 0, end_ms > start_ms, segments are contiguous without gaps",
+      "- narration should be rich and specific, sized to fit segment duration at ~12.5 chars/sec",
+      "- background_url should be a path tag like /github, /jenkins, /datadog, /kubernetes, /rds, /redis, or /",
+      "- If a custom full URL is required, use a valid https URL",
+      "- DO NOT include any commentary, code fences, or text outside JSON",
+    ].join("\n");
+
+    const user = [
+      "Incident text:",
+      content,
+      "",
+      "Background selection guidance:",
+      "- logs/metrics: /datadog",
+      "- deployments/builds: /jenkins",
+      "- code/PRs: /github",
+      "- kubernetes: /kubernetes",
+      "- databases: /rds",
+      "- caches/queues: /redis",
+      "- default/home: /",
+      "",
+      "Narrative guidance:",
+      "- Begin with the alert summary and time window",
+      "- Explain observations and likely cause",
+      "- Call out specific signals, dashboards, and changes tied to the context",
+      "- Give actionable next steps and mitigation",
+      "- Keep the narration continuous and easy to voice over",
+    ].join("\n");
+
+    const model = process.env.OPENAI_MODEL || "gpt-5-2025-08-07";
+    const completion = await openaiClient.chat.completions.create({
+      model,
+      max_completion_tokens: 700,
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: user },
+      ],
+    });
+    let raw = completion.choices?.[0]?.message?.content?.trim();
+    if (!raw) return null;
+    const jsonOnly = extractFirstJsonObject(raw) || raw;
+    const parsed = JSON.parse(jsonOnly) as VideoScript;
+    if (
+      !parsed?.segments?.length ||
+      typeof parsed.total_duration_ms !== "number"
+    ) {
+      return null;
+    }
+    return parsed;
+  } catch (error) {
+    console.error("❌ generateStructuredVideoScriptFromIncident error:", error);
+    return null;
+  }
+}
+
+/**
+ * Convert an unstructured narrated "Video Script" text into structured segments via LLM.
+ */
+async function convertNarratedScriptTextToStructured(
+  videoScriptText: string
+): Promise<VideoScript | null> {
+  try {
+    if (!process.env.OPENAI_API_KEY) return null;
+    const content = videoScriptText?.trim();
+    if (!content) return null;
+
+    const system = [
+      "You are a formatter that outputs ONLY strict JSON.",
+      "You will receive a narrated incident walkthrough as plain text.",
+      "Segment it into 5-7 coherent parts with timings and return JSON.",
+      "Schema:",
+      "{",
+      '  "total_duration_ms": number,',
+      '  "segments": [',
+      '    { "id": string, "start_ms": number, "end_ms": number, "background_url": string, "narration": string }',
+      "  ]",
+      "}",
+      "Constraints:",
+      "- Total duration 25,000-45,000 ms",
+      "- Segments contiguous, no gaps; start at 0 ms",
+      "- Estimate timings using ~12.5 chars/sec for narration length",
+      "- Choose background_url tags from /datadog, /jenkins, /github, /kubernetes, /rds, /redis, /",
+      "- DO NOT include any commentary, code fences, or text outside JSON",
+    ].join("\n");
+
+    const user = ["Narrated script text:", content].join("\n\n");
+
+    const model = process.env.OPENAI_MODEL || "gpt-5-2025-08-07";
+    const completion = await openaiClient.chat.completions.create({
+      model,
+      max_completion_tokens: 800,
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: user },
+      ],
+    });
+    let raw = completion.choices?.[0]?.message?.content?.trim();
+    if (!raw) return null;
+    const jsonOnly = extractFirstJsonObject(raw) || raw;
+    const parsed = JSON.parse(jsonOnly) as VideoScript;
+    if (
+      !parsed?.segments?.length ||
+      typeof parsed.total_duration_ms !== "number"
+    ) {
+      return null;
+    }
+    return parsed;
+  } catch (error) {
+    console.error("❌ convertNarratedScriptTextToStructured error:", error);
+    return null;
+  }
+}
+
+/**
  * High-level pipeline: incident text → root cause paragraph → structured video script.
  */
 export async function runIncidentVideoScriptPipeline(
   incidentText: string
 ): Promise<{ paragraph: string; script: VideoScript } | null> {
+  // If the user pasted a structured RCA, generate the script directly from it
+  if (isStructuredRcaText(incidentText)) {
+    const directScript = await generateStructuredVideoScriptFromIncident(
+      incidentText
+    );
+    if (directScript) {
+      // Create a short paragraph summary to return alongside the script
+      const paragraph =
+        (await generateRootCauseParagraph(incidentText)) ||
+        "Narrated walkthrough based on the provided structured incident RCA.";
+      return { paragraph, script: directScript };
+    }
+  }
+
   let paragraph = await generateRootCauseParagraph(incidentText);
   if (!paragraph) {
     // Fallback heuristic paragraph
@@ -702,36 +991,21 @@ export async function runIncidentVideoScriptPipeline(
       "Mitigate by scaling replicas, profiling hot paths, and reviewing the most recent deployment. Context: " +
       snippet;
   }
-  let script = await generateStructuredVideoScript(paragraph);
+  let script = await generateStructuredVideoScript(paragraph, incidentText);
   if (!script) {
-    // Fallback heuristic script
-    const segments: VideoScriptSegment[] = [
-      {
-        id: "intro",
-        start_ms: 0,
-        end_ms: 4000,
-        background_url: "/datadog",
-        narration:
-          "Critical incident detected. Metrics indicate sustained resource pressure around the alert window.",
-      },
-      {
-        id: "deploy",
-        start_ms: 4000,
-        end_ms: 8000,
-        background_url: "/jenkins",
-        narration:
-          "Check the most recent deployment near the alert time for CPU heavy changes and roll back if needed.",
-      },
-      {
-        id: "code",
-        start_ms: 8000,
-        end_ms: 12000,
-        background_url: "/github",
-        narration:
-          "Review the latest commit and related PRs. Profile hot endpoints and reduce compute hotspots.",
-      },
-    ];
-    script = { total_duration_ms: 12000, segments };
+    // Retry by generating from the raw incident text directly
+    script = await generateStructuredVideoScriptFromIncident(incidentText);
+  }
+  if (!script) {
+    // Fallback to unstructured narrated script, then convert to structured
+    const narrated = await generateIncidentVideoScript(incidentText);
+    if (narrated) {
+      script = await convertNarratedScriptTextToStructured(narrated);
+    }
+  }
+  if (!script) {
+    // Give up on structured playback; caller will use unstructured narration
+    return null;
   }
   return { paragraph, script };
 }
@@ -752,7 +1026,7 @@ export async function summarizeFromImageBase64(
     const model =
       process.env.OPENAI_VISION_MODEL ||
       process.env.OPENAI_MODEL ||
-      "gpt-5-2025-08-07";
+      "gpt-4o-mini";
     const system =
       "You are Sherlocks. Extract key error messages, stack traces, metrics, and service names from the screenshot. Return a concise paragraph (<=80 words) suitable for incident triage.";
 
