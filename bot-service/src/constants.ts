@@ -167,6 +167,8 @@ export const SCREENSHARE_PHRASES = {
   stop: [
     "stop screenshare",
     "stop screen share",
+    "stop the screenshare",
+    "please stop the screenshare",
     "turn off screenshare",
     "disable screenshare",
     "stop sharing",

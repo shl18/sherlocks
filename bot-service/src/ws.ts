@@ -682,37 +682,39 @@ wss.on("connection", (ws) => {
         const botId = videoEvent.data.bot.id;
         const recordingId = videoEvent.data.recording.id;
 
-        // Persist the received image to the "upload" folder
-        try {
-          const uploadDir = path.resolve(__dirname, "..", "upload");
-          // Ensure directory exists
+        // Persist the received image to the "upload" folder ONLY for screenshare frames
+        if (type === "screenshare") {
           try {
-            fs.mkdirSync(uploadDir, { recursive: true });
-          } catch (mkdirErr) {
-            console.error("❌ Failed to ensure upload directory:", mkdirErr);
+            const uploadDir = path.resolve(__dirname, "..", "upload");
+            // Ensure directory exists
+            try {
+              fs.mkdirSync(uploadDir, { recursive: true });
+            } catch (mkdirErr) {
+              console.error("❌ Failed to ensure upload directory:", mkdirErr);
+            }
+
+            // Some sources may prepend a data URL header; strip if present
+            const base64Data = buffer.startsWith("data:")
+              ? buffer.split(",")[1] || ""
+              : buffer;
+            const imageBuffer = Buffer.from(base64Data, "base64");
+
+            // Sanitize parts used in filename
+            const safeAbs = String(timestamp.absolute || "")
+              .replace(/[^\w.-]/g, "_")
+              .slice(0, 64);
+            const safeType = String(type || "unknown").replace(/[^\w.-]/g, "_");
+            const safeParticipant = String(
+              participant.id ?? "unknown"
+            ).toString();
+            const filenameBase = safeAbs || `ts_${Date.now()}`;
+            const filename = `${filenameBase}_${safeType}_${safeParticipant}.png`;
+            const filePath = path.join(uploadDir, filename);
+
+            await fs.promises.writeFile(filePath, imageBuffer);
+          } catch (saveErr) {
+            console.error("❌ Failed to save received image frame:", saveErr);
           }
-
-          // Some sources may prepend a data URL header; strip if present
-          const base64Data = buffer.startsWith("data:")
-            ? buffer.split(",")[1] || ""
-            : buffer;
-          const imageBuffer = Buffer.from(base64Data, "base64");
-
-          // Sanitize parts used in filename
-          const safeAbs = String(timestamp.absolute || "")
-            .replace(/[^\w.-]/g, "_")
-            .slice(0, 64);
-          const safeType = String(type || "unknown").replace(/[^\w.-]/g, "_");
-          const safeParticipant = String(
-            participant.id ?? "unknown"
-          ).toString();
-          const filenameBase = safeAbs || `ts_${Date.now()}`;
-          const filename = `${filenameBase}_${safeType}_${safeParticipant}.png`;
-          const filePath = path.join(uploadDir, filename);
-
-          await fs.promises.writeFile(filePath, imageBuffer);
-        } catch (saveErr) {
-          console.error("❌ Failed to save received image frame:", saveErr);
         }
 
         try {
