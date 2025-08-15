@@ -416,7 +416,7 @@ export async function askLLM(
     const system =
       "You are Sherlocks, an SRE-focused incident triage assistant. Your job is to quickly identify likely root causes, impacted components, and immediate mitigations from short snippets of context. Be concise (1-3 sentences), action-oriented, and specific. Prefer concrete next steps (dashboards, logs to check, feature flags, rollbacks) over generic advice. If interrupted, prioritize the newest message.";
 
-    const model = process.env.OPENAI_MODEL || "gpt-5-mini-2025-08-07";
+    const model = process.env.OPENAI_MODEL || "gpt-5-2025-08-07";
 
     // Prefer the lightweight responses for latency
     const completion = await openaiClient.chat.completions.create({
@@ -512,7 +512,7 @@ export async function generateIncidentVideoScript(
       "Keep under 180 words. Use present tense. No greetings or closings.",
     ].join("\n");
 
-    const model = process.env.OPENAI_MODEL || "gpt-5-mini-2025-08-07";
+    const model = process.env.OPENAI_MODEL || "gpt-5-2025-08-07";
 
     const completion = await openaiClient.chat.completions.create({
       model,
@@ -599,7 +599,7 @@ export async function generateRootCauseParagraph(
       "Avoid bullet points. Keep under 80 words.",
     ].join("\n");
 
-    const model = process.env.OPENAI_MODEL || "gpt-5-mini-2025-08-07";
+    const model = process.env.OPENAI_MODEL || "gpt-5-2025-08-07";
     const completion = await openaiClient.chat.completions.create({
       model,
       max_completion_tokens: 160,
@@ -659,7 +659,7 @@ export async function generateStructuredVideoScript(
       "- default/home: /",
     ].join("\n");
 
-    const model = process.env.OPENAI_MODEL || "gpt-5-mini-2025-08-07";
+    const model = process.env.OPENAI_MODEL || "gpt-5-2025-08-07";
     const completion = await openaiClient.chat.completions.create({
       model,
       max_completion_tokens: 500,
@@ -752,7 +752,7 @@ export async function summarizeFromImageBase64(
     const model =
       process.env.OPENAI_VISION_MODEL ||
       process.env.OPENAI_MODEL ||
-      "gpt-5-mini-2025-08-07";
+      "gpt-5-2025-08-07";
     const system =
       "You are Sherlocks. Extract key error messages, stack traces, metrics, and service names from the screenshot. Return a concise paragraph (<=80 words) suitable for incident triage.";
 
@@ -801,7 +801,7 @@ export async function textToSpeech(text: string): Promise<Buffer | null> {
     const response = await deepgramClient.speak.request(
       { text },
       {
-        model: "aura-2-thalia-en",
+        model: "aura-2-hermes-en",
         encoding: "linear16",
         container: "wav",
         sample_rate: 16000,
