@@ -17,7 +17,8 @@ export type RecallConstants = {
     };
     realtime_endpoints: RecallRealtimeEndpoint[];
   };
-  output_media: {
+  // Make output_media optional so we don't screenshare by default
+  output_media?: {
     screenshare: { kind: string; config: { url: string } };
   };
   // automatic_audio_output: {
@@ -141,6 +142,28 @@ export const SCREEN_OCR_PHRASES = {
   stop: ["stop analyzing", "stop screen analysis", "you can stop now"],
 };
 
+// Voice/chat phrases to explicitly control when the bot is allowed to screenshare
+export const SCREENSHARE_PHRASES = {
+  start: [
+    "start screenshare",
+    "start screen share",
+    "share your screen",
+    "start sharing",
+    "show the screen",
+    "start showing",
+    "enable screenshare",
+    "turn on screenshare",
+  ],
+  stop: [
+    "stop screenshare",
+    "stop screen share",
+    "turn off screenshare",
+    "disable screenshare",
+    "stop sharing",
+    "you can stop sharing",
+  ],
+};
+
 export const BOT_CONFIG = (meetingUrl: string): RecallConstants => ({
   meeting_url: meetingUrl,
   bot_name: "Sherlocks",
@@ -163,14 +186,6 @@ export const BOT_CONFIG = (meetingUrl: string): RecallConstants => ({
         ],
       },
     ],
-  },
-  output_media: {
-    screenshare: {
-      kind: "webpage",
-      config: {
-        url: SCREENSHARE_BASE_URL,
-      },
-    },
   },
   // automatic_audio_output: {
   //   in_call_recording: { data: { kind: "mp3", b64_data: "base64_data" } },

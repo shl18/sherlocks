@@ -98,6 +98,35 @@ export async function switchScreenshare(newUrl: string) {
 }
 
 /**
+ * Stop any active screenshare/output_media stream for the current bot.
+ */
+export async function stopScreenshare(): Promise<boolean> {
+  if (!currentBotId) {
+    console.error("❌ No bot ID available to stop screenshare");
+    return false;
+  }
+  try {
+    const url = `${RECALL_API_URL}${currentBotId}/output_media/`;
+    const headers = {
+      accept: "application/json",
+      "content-type": "application/json",
+      Authorization: `Token ${RECALL_API_KEY}`,
+    };
+    await axios.delete(url, { headers, data: { screenshare: true } });
+    console.log("⏹️ Stopped current screenshare/output media");
+    return true;
+  } catch (e: any) {
+    const status = e?.response?.status;
+    if (status === 404 || status === 400) {
+      console.warn("ℹ️ No active screenshare to stop (", status, ")");
+      return true;
+    }
+    console.error("❌ Failed to stop screenshare:", status, e?.message);
+    return false;
+  }
+}
+
+/**
  * Fetch current output media for the active bot.
  */
 export async function getCurrentOutputMedia(): Promise<

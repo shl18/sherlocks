@@ -19,13 +19,19 @@ import {
   VideoScript,
   summarizeFromImageBase64,
 } from "./llm";
-import { sendAudioToBot, stopBotAudio, waitForScreenshareUrl } from "./recall";
+import {
+  sendAudioToBot,
+  stopBotAudio,
+  waitForScreenshareUrl,
+  stopScreenshare,
+} from "./recall";
 import {
   resolveBackgroundUrl,
   SCREEN_OCR,
   SCREEN_OCR_PHRASES,
   USE_EMBEDDED_SCRIPT,
   buildScreenshareUrlWithScript,
+  SCREENSHARE_PHRASES,
 } from "./constants";
 import { switchScreenshare } from "./recall";
 
@@ -327,10 +333,18 @@ async function speakInChunks(
 // ===== Video Script Playback =====
 // Serialize screenshare switches to avoid overlapping DELETE/POST calls
 let screenshareSwitchChain: Promise<void> = Promise.resolve();
+let isScreenshareAllowed = false; // Only switch screens when explicitly enabled by user
+let isVideoScriptPlaying = false; // Block OCR-driven interruptions during script playback
 
 function queueScreenshareSwitch(url: string): Promise<void> {
   screenshareSwitchChain = screenshareSwitchChain.then(async () => {
     try {
+      if (!isScreenshareAllowed) {
+        console.log(
+          "⏸️ Screenshare switch skipped (not allowed). Say 'start screenshare' to enable."
+        );
+        return;
+      }
       await switchScreenshare(url);
       // Wait until Recall confirms the webpage is set, or time out gracefully
       const ok = await waitForScreenshareUrl(url, 8000, 400);
@@ -349,40 +363,54 @@ function queueScreenshareSwitch(url: string): Promise<void> {
 }
 
 async function playVideoScript(script: VideoScript): Promise<void> {
-  // If enabled, start a single-stream screenshare with embedded script instructions
-  if (USE_EMBEDDED_SCRIPT) {
-    try {
-      const url = buildScreenshareUrlWithScript(script as any);
-      await queueScreenshareSwitch(url);
-    } catch (e) {
-      console.error("❌ Failed to start embedded-script screenshare:", e);
+  isVideoScriptPlaying = true;
+  try {
+    // Ensure screenshare switches are allowed during a video script
+    if (!isScreenshareAllowed) {
+      console.log("🟢 Enabling screenshare for video script playback");
+      isScreenshareAllowed = true;
     }
-  }
 
-  // Speak each segment; if not embedded, switch backgrounds per segment
-  for (const segment of script.segments) {
-    // If a new user input started processing, abort remaining segments
-    if (isCurrentlyProcessing) {
-      console.log("🛑 Aborting video script playback due to new input");
-      break;
-    }
-    if (!segment?.narration) continue;
-    if (!USE_EMBEDDED_SCRIPT && segment.background_url) {
+    // If enabled, start a single-stream screenshare with embedded script instructions
+    if (USE_EMBEDDED_SCRIPT) {
       try {
-        // Accept full URLs or shorthand tags like /github, /jerkin, /datadog
-        const resolved = resolveBackgroundUrl(segment.background_url);
-        await queueScreenshareSwitch(resolved);
+        const url = buildScreenshareUrlWithScript(script as any);
+        await queueScreenshareSwitch(url);
       } catch (e) {
-        console.error("❌ Failed to switch background:", e);
+        console.error("❌ Failed to start embedded-script screenshare:", e);
       }
     }
-    const generationId = newTtsGenerationId();
-    await speakInChunks(segment.narration, generationId, "chat");
-    // If cancelled mid-segment, stop the rest of the script
-    if (hasGenerationBeenCancelled(generationId) || isCurrentlyProcessing) {
-      console.log("🛑 Video script playback cancelled/interrupted");
-      break;
+
+    // Speak each segment; if not embedded, switch backgrounds per segment
+    for (const segment of script.segments) {
+      // If a new user input started processing, abort remaining segments
+      if (isCurrentlyProcessing && !isVideoScriptPlaying) {
+        console.log("🛑 Aborting video script playback due to new input");
+        break;
+      }
+      if (!segment?.narration) continue;
+      if (!USE_EMBEDDED_SCRIPT && segment.background_url) {
+        try {
+          // Accept full URLs or shorthand tags like /github, /jerkin, /datadog
+          const resolved = resolveBackgroundUrl(segment.background_url);
+          await queueScreenshareSwitch(resolved);
+        } catch (e) {
+          console.error("❌ Failed to switch background:", e);
+        }
+      }
+      const generationId = newTtsGenerationId();
+      await speakInChunks(segment.narration, generationId, "chat");
+      // If cancelled mid-segment, stop the rest of the script
+      if (
+        hasGenerationBeenCancelled(generationId) ||
+        (isCurrentlyProcessing && !isVideoScriptPlaying)
+      ) {
+        console.log("🛑 Video script playback cancelled/interrupted");
+        break;
+      }
     }
+  } finally {
+    isVideoScriptPlaying = false;
   }
 }
 
@@ -417,6 +445,22 @@ function maybeStartScreenOcrSession(triggerText: string): string | null {
   return null;
 }
 
+function maybeToggleScreensharePermission(triggerText: string): string | null {
+  if (matchesAny(triggerText, SCREENSHARE_PHRASES.start)) {
+    isScreenshareAllowed = true;
+    console.log("🟢 Screenshare permission ENABLED by user");
+    return "Okay, I'll share visuals when needed. Say 'stop screenshare' anytime to disable it.";
+  }
+  if (matchesAny(triggerText, SCREENSHARE_PHRASES.stop)) {
+    isScreenshareAllowed = false;
+    console.log("🔴 Screenshare permission DISABLED by user");
+    // Best-effort stop on backend to immediately halt visuals
+    void stopScreenshare();
+    return "Got it. I won't share the screen until you ask me to again.";
+  }
+  return null;
+}
+
 async function processTextWithLLM(
   text: string,
   source: "transcript" | "chat"
@@ -424,7 +468,7 @@ async function processTextWithLLM(
   // Allow preemption: do NOT return early. If something is already
   // processing or speaking, we will interrupt it below.
   const wasPreempting = isCurrentlyProcessing;
-  if (wasPreempting) {
+  if (wasPreempting && !isVideoScriptPlaying) {
     console.log(`⚡ Preempting ongoing processing with new ${source} input`);
   }
 
@@ -438,7 +482,9 @@ async function processTextWithLLM(
     console.log(`🧠 Processing ${source} text with LLM: "${text}"`);
 
     // Check for interruption - if user speaks while bot is talking
-    const wasInterrupted = handleInterruption(text);
+    const wasInterrupted = isVideoScriptPlaying
+      ? false
+      : handleInterruption(text);
     if (wasInterrupted) {
       console.log("🚫 Previous bot speech interrupted by user input");
 
@@ -464,10 +510,14 @@ async function processTextWithLLM(
       // 2) Full pipeline: root cause → structured video script → playback
       const pipeline = await runIncidentVideoScriptPipeline(text);
       if (pipeline?.script) {
-        // Avoid speaking an intro line that could collide with first segment
-        reply = null;
-        // Kick off playback asynchronously
+        // Short acknowledgement before starting the guided screenshare
+        const ack = "Sharing a quick incident walkthrough and screenshare now.";
+        const generationId = newTtsGenerationId();
+        await speakInChunks(ack, generationId, source);
+        // Start playback asynchronously after the ack
         void playVideoScript(pipeline.script);
+        // Consider this handled; avoid duplicative reply
+        reply = null;
       } else {
         // Fallback: unstructured video script text
         reply = await generateIncidentVideoScript(text);
@@ -550,12 +600,17 @@ wss.on("connection", (ws) => {
 
         // Process the transcript if we have text
         if (transcriptText?.trim()) {
-          // Try toggling OCR session from transcript commands
+          // Try toggling OCR session and screenshare permission from transcript commands
           const ocrResponse = maybeStartScreenOcrSession(transcriptText);
-          if (ocrResponse) {
-            // Provide immediate feedback for OCR session changes
+          const shareResponse =
+            maybeToggleScreensharePermission(transcriptText);
+          if (ocrResponse && !isVideoScriptPlaying) {
             await processTextWithLLM(ocrResponse, "transcript");
-          } else {
+          }
+          if (shareResponse && !isVideoScriptPlaying) {
+            await processTextWithLLM(shareResponse, "transcript");
+          }
+          if (!ocrResponse && !shareResponse) {
             await processTextWithLLM(transcriptText, "transcript");
           }
         } else {
@@ -582,12 +637,16 @@ wss.on("connection", (ws) => {
 
         // Process the chat message if we have text
         if (chatData.text?.trim()) {
-          // Try toggling OCR session from chat commands
+          // Try toggling OCR session and screenshare permission from chat commands
           const ocrResponse = maybeStartScreenOcrSession(chatData.text);
-          if (ocrResponse) {
-            // Provide immediate feedback for OCR session changes
+          const shareResponse = maybeToggleScreensharePermission(chatData.text);
+          if (ocrResponse && !isVideoScriptPlaying) {
             await processTextWithLLM(ocrResponse, "chat");
-          } else {
+          }
+          if (shareResponse && !isVideoScriptPlaying) {
+            await processTextWithLLM(shareResponse, "chat");
+          }
+          if (!ocrResponse && !shareResponse) {
             await processTextWithLLM(chatData.text, "chat");
           }
         } else {
