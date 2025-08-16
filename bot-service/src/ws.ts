@@ -16,6 +16,7 @@ import {
   getIntentForText,
   generateIdentityResponse,
   generateShortAckResponse,
+  generatePoliteClosingResponse,
   runIncidentVideoScriptPipeline,
   VideoScript,
   summarizeFromImageBase64,
@@ -33,6 +34,7 @@ import {
   USE_EMBEDDED_SCRIPT,
   buildScreenshareUrlWithScript,
   SCREENSHARE_PHRASES,
+  MUTE_PHRASES,
 } from "./constants";
 import { switchScreenshare } from "./recall";
 
@@ -331,11 +333,43 @@ async function speakInChunks(
   }
 }
 
+// ===== Global audio playback lock to prevent overlap =====
+let audioPlaybackLock: Promise<void> = Promise.resolve();
+
+async function withAudioLock<T>(fn: () => Promise<T>): Promise<T> {
+  // Wait for any ongoing playback section to finish (or be cancelled)
+  const prev = audioPlaybackLock.catch(() => {});
+  let release: () => void;
+  audioPlaybackLock = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await prev;
+  try {
+    return await fn();
+  } finally {
+    release!();
+  }
+}
+
+async function speakExclusively(
+  reply: string,
+  source: "transcript" | "chat"
+): Promise<void> {
+  await withAudioLock(async () => {
+    const generationId = newTtsGenerationId();
+    // Best-effort stop any residual audio before new playback
+    await stopBotAudio();
+    await sleep(80);
+    await speakInChunks(reply, generationId, source);
+  });
+}
+
 // ===== Video Script Playback =====
 // Serialize screenshare switches to avoid overlapping DELETE/POST calls
 let screenshareSwitchChain: Promise<void> = Promise.resolve();
 let isScreenshareAllowed = false; // Only switch screens when explicitly enabled by user
 let isVideoScriptPlaying = false; // Block OCR-driven interruptions during script playback
+let isMuted = false; // When true, bot will not speak responses
 
 function queueScreenshareSwitch(url: string): Promise<void> {
   screenshareSwitchChain = screenshareSwitchChain.then(async () => {
@@ -399,13 +433,9 @@ async function playVideoScript(script: VideoScript): Promise<void> {
           console.error("❌ Failed to switch background:", e);
         }
       }
-      const generationId = newTtsGenerationId();
-      await speakInChunks(segment.narration, generationId, "chat");
-      // If cancelled mid-segment, stop the rest of the script
-      if (
-        hasGenerationBeenCancelled(generationId) ||
-        (isCurrentlyProcessing && !isVideoScriptPlaying)
-      ) {
+      await speakExclusively(segment.narration, "chat");
+      // If new input started processing, stop the rest of the script
+      if (isCurrentlyProcessing && !isVideoScriptPlaying) {
         console.log("🛑 Video script playback cancelled/interrupted");
         break;
       }
@@ -458,6 +488,24 @@ function maybeToggleScreensharePermission(triggerText: string): string | null {
     // Best-effort stop on backend to immediately halt visuals
     void stopScreenshare();
     return "Got it. I won't share the screen until you ask me to again.";
+  }
+  return null;
+}
+
+function maybeToggleMute(triggerText: string): string | null {
+  if (matchesAny(triggerText, MUTE_PHRASES.start)) {
+    isMuted = true;
+    console.log("🔕 Bot muted by user command");
+    // Best effort: stop any current audio and video script
+    void stopBotAudio();
+    isVideoScriptPlaying = false;
+    return "Okay, I'll stay quiet until you ask me to speak again.";
+  }
+  if (matchesAny(triggerText, MUTE_PHRASES.stop)) {
+    const wasMuted = isMuted;
+    isMuted = false;
+    console.log("🔔 Bot unmuted by user command");
+    return wasMuted ? "I'm back. How can I help?" : null;
   }
   return null;
 }
@@ -526,8 +574,7 @@ async function processTextWithLLM(
           // Short acknowledgement before starting the guided screenshare
           const ack =
             "Sharing a quick incident walkthrough and screenshare now.";
-          const generationId = newTtsGenerationId();
-          await speakInChunks(ack, generationId, source);
+          await speakExclusively(ack, source);
           // Start playback asynchronously after the ack
           void playVideoScript(pipeline.script);
           // Consider this handled; avoid duplicative reply
@@ -554,6 +601,8 @@ async function processTextWithLLM(
           reply = generateIdentityResponse();
         } else if (intent === "short") {
           reply = generateShortAckResponse();
+        } else if (intent === "closing") {
+          reply = generatePoliteClosingResponse();
         }
       }
     }
@@ -564,12 +613,15 @@ async function processTextWithLLM(
     }
 
     if (reply) {
+      if (isMuted) {
+        console.log("🔕 Muted: suppressing TTS output");
+        return;
+      }
       console.log(`🤖 LLM Reply for ${source}:`, reply);
 
       // Start chunked, cancelable playback asynchronously
-      const generationId = newTtsGenerationId();
-      // Fire and forget so we don't block receiving further transcripts
-      void speakInChunks(reply, generationId, source);
+      // Fire and forget but enforce no overlap with the audio lock
+      void speakExclusively(reply, source);
     } else {
       console.log(`🤖 LLM returned empty result for ${source}`);
     }
@@ -625,11 +677,15 @@ wss.on("connection", (ws) => {
           const ocrResponse = maybeStartScreenOcrSession(transcriptText);
           const shareResponse =
             maybeToggleScreensharePermission(transcriptText);
+          const muteResponse = maybeToggleMute(transcriptText);
           if (ocrResponse && !isVideoScriptPlaying) {
             await processTextWithLLM(ocrResponse, "transcript");
           }
           if (shareResponse && !isVideoScriptPlaying) {
             await processTextWithLLM(shareResponse, "transcript");
+          }
+          if (muteResponse && !isVideoScriptPlaying) {
+            await processTextWithLLM(muteResponse, "transcript");
           }
           if (!ocrResponse && !shareResponse) {
             await processTextWithLLM(transcriptText, "transcript");
@@ -661,11 +717,15 @@ wss.on("connection", (ws) => {
           // Try toggling OCR session and screenshare permission from chat commands
           const ocrResponse = maybeStartScreenOcrSession(chatData.text);
           const shareResponse = maybeToggleScreensharePermission(chatData.text);
+          const muteResponse = maybeToggleMute(chatData.text);
           if (ocrResponse && !isVideoScriptPlaying) {
             await processTextWithLLM(ocrResponse, "chat");
           }
           if (shareResponse && !isVideoScriptPlaying) {
             await processTextWithLLM(shareResponse, "chat");
+          }
+          if (muteResponse && !isVideoScriptPlaying) {
+            await processTextWithLLM(muteResponse, "chat");
           }
           if (!ocrResponse && !shareResponse) {
             await processTextWithLLM(chatData.text, "chat");

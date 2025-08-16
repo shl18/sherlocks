@@ -176,6 +176,41 @@ export const SCREENSHARE_PHRASES = {
   ],
 };
 
+// Voice/chat phrases to toggle bot speaking (mute/unmute)
+export const MUTE_PHRASES = {
+  start: [
+    "mute",
+    "go mute",
+    "on mute",
+    "be quiet",
+    "please be quiet",
+    "shut up",
+    "please shut up",
+    "stop talking",
+    "stop speaking",
+    "don't talk",
+    "do not talk",
+    "no talking",
+    "be silent",
+    "stay silent",
+    "stop it",
+    "stop it i got it",
+    "i got it",
+    "quit talking",
+    "please stop",
+  ],
+  stop: [
+    "unmute",
+    "you can talk",
+    "you can speak now",
+    "start talking",
+    "resume talking",
+    "resume speaking",
+    "please speak",
+    "talk now",
+  ],
+};
+
 export const BOT_CONFIG = (meetingUrl: string): RecallConstants => ({
   meeting_url: meetingUrl,
   bot_name: "Sherlocks",

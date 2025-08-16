@@ -61,6 +61,55 @@ const SAME_INTENT_COOLDOWN = 6000;
 // Average word length: ~5 characters, so roughly 12.5 characters per second
 const CHARACTERS_PER_SECOND = 12.5;
 
+// -------- Streaming + rate-limit aware Chat Completions helper --------
+async function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+type ChatStreamParams = {
+  model: string;
+  messages: OpenAI.Chat.ChatCompletionMessageParam[];
+  max_completion_tokens?: number;
+  response_format?: { type: "json_object" };
+  temperature?: number;
+};
+
+async function chatCompletionStream(
+  params: ChatStreamParams,
+  attempts: number = 3
+): Promise<string | null> {
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      const stream = await openaiClient.chat.completions.create({
+        ...params,
+        stream: true,
+      } as any);
+
+      let text = "";
+      for await (const chunk of stream as any) {
+        const delta = chunk?.choices?.[0]?.delta?.content;
+        if (typeof delta === "string") text += delta;
+      }
+      return text?.trim() || null;
+    } catch (err: any) {
+      const status = err?.status || err?.response?.status;
+      if (status === 429 && attempt < attempts) {
+        const headers = err?.headers || err?.response?.headers || {};
+        const retryAfterMs = Number(headers["retry-after-ms"]) || 250;
+        const backoff = retryAfterMs + attempt * 200;
+        console.warn(
+          `⚠️ OpenAI rate limit (attempt ${attempt}/${attempts}). Retrying in ${backoff}ms...`
+        );
+        await delay(backoff);
+        continue;
+      }
+      console.error("❌ chatCompletionStream error:", err);
+      return null;
+    }
+  }
+  return null;
+}
+
 // -------- JSON extraction helper (when model returns extra text) --------
 function extractFirstJsonObject(
   text: string | undefined | null
@@ -153,6 +202,40 @@ function detectIntent(normalizedTranscript: string): string | null {
     "i need assistance",
   ];
   if (matchesAny(helpPhrases)) return "help";
+
+  const gratitudePhrases = [
+    "thank you",
+    "thanks",
+    "thank u",
+    "thx",
+    "ty",
+    "appreciate it",
+    "much appreciated",
+    "thankyou",
+    "thank you so much",
+    "thanks so much",
+  ];
+  const closingPhrases = [
+    "i am done",
+    "i'm done",
+    "done with it",
+    "that's all",
+    "thats all",
+    "that's it",
+    "thats it",
+    "all good",
+    "we are done",
+    "we're done",
+    "no further help",
+    "nothing else",
+    "you can leave",
+    "you may leave",
+    "bye",
+    "goodbye",
+    "see you",
+  ];
+  if (matchesAny(gratitudePhrases) || matchesAny(closingPhrases))
+    return "closing";
 
   const identityPhrases = [
     "who are you",
@@ -461,9 +544,8 @@ export async function askLLM(
       "You are Sherlocks, an SRE-focused incident triage assistant. Your job is to quickly identify likely root causes, impacted components, and immediate mitigations from short snippets of context. Be concise (1-3 sentences), action-oriented, and specific. Prefer concrete next steps (dashboards, logs to check, feature flags, rollbacks) over generic advice. If interrupted, prioritize the newest message.";
 
     const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
-
-    // Prefer the lightweight responses for latency
-    const completion = await openaiClient.chat.completions.create({
+    // Stream for rate-limit resilience
+    const streamed = await chatCompletionStream({
       model,
       max_completion_tokens: 180,
       messages: [
@@ -476,10 +558,18 @@ export async function askLLM(
         },
       ],
     });
+    if (streamed) return streamed;
 
-    const text = completion.choices?.[0]?.message?.content?.trim();
-    if (!text) return null;
-    return text;
+    // Fallback non-streaming
+    const completion = await openaiClient.chat.completions.create({
+      model,
+      max_completion_tokens: 180,
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: prompt },
+      ],
+    });
+    return completion.choices?.[0]?.message?.content?.trim() || null;
   } catch (error) {
     console.error("❌ OpenAI askLLM error:", error);
     return null;
@@ -506,7 +596,7 @@ export async function askLLMWithRetries(
     const system =
       "You are Sherlocks, an SRE-focused incident triage assistant. Provide a concrete, actionable triage reply in 2-4 sentences.";
     const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
-    const completion = await openaiClient.chat.completions.create({
+    const streamed = await chatCompletionStream({
       model,
       max_completion_tokens: 200,
       messages: [
@@ -521,7 +611,18 @@ export async function askLLMWithRetries(
         },
       ],
     });
-    reply = completion.choices?.[0]?.message?.content?.trim() || null;
+    reply = streamed;
+    if (!reply) {
+      const completion = await openaiClient.chat.completions.create({
+        model,
+        max_completion_tokens: 200,
+        messages: [
+          { role: "system", content: system },
+          { role: "user", content: prompt },
+        ],
+      });
+      reply = completion.choices?.[0]?.message?.content?.trim() || null;
+    }
     if (reply) return reply;
   } catch (e) {
     console.error("❌ askLLMWithRetries second-attempt error:", e);
@@ -622,7 +723,7 @@ export async function generateIncidentVideoScript(
 
     const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
 
-    const completion = await openaiClient.chat.completions.create({
+    let text = await chatCompletionStream({
       model,
       max_completion_tokens: 280,
       messages: [
@@ -630,11 +731,8 @@ export async function generateIncidentVideoScript(
         { role: "user", content: prompt },
       ],
     });
-
-    let text = completion.choices?.[0]?.message?.content?.trim();
     if (!text) {
-      // Retry with a stronger prompt asking to not omit the answer
-      const completion2 = await openaiClient.chat.completions.create({
+      text = await chatCompletionStream({
         model,
         max_completion_tokens: 320,
         messages: [
@@ -645,7 +743,6 @@ export async function generateIncidentVideoScript(
           },
         ],
       });
-      text = completion2.choices?.[0]?.message?.content?.trim();
     }
     return text || null;
   } catch (error) {
@@ -701,6 +798,16 @@ export function generateIdentityResponse(): string {
  */
 export function generateShortAckResponse(): string {
   return "Got it!";
+}
+
+/**
+ * Provide a polite closing/thanks response suitable for TTS.
+ */
+export function generatePoliteClosingResponse(): string {
+  return (
+    "You're very welcome! If you need anything else later, just let me know. " +
+    "Have a great day!"
+  );
 }
 
 /**
@@ -796,7 +903,7 @@ export async function generateStructuredVideoScript(
     ].join("\n");
 
     const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
-    const completion = await openaiClient.chat.completions.create({
+    let raw = await chatCompletionStream({
       model,
       max_completion_tokens: 500,
       response_format: { type: "json_object" },
@@ -805,7 +912,6 @@ export async function generateStructuredVideoScript(
         { role: "user", content: user },
       ],
     });
-    let raw = completion.choices?.[0]?.message?.content?.trim();
     if (!raw) return null;
     // Some models may prepend/append text; try to extract JSON
     const jsonOnly = extractFirstJsonObject(raw) || raw;
@@ -876,8 +982,8 @@ async function generateStructuredVideoScriptFromIncident(
       "- Keep the narration continuous and easy to voice over",
     ].join("\n");
 
-    const model = process.env.OPENAI_MODEL || "gpt-5-2025-08-07";
-    const completion = await openaiClient.chat.completions.create({
+    const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
+    let raw = await chatCompletionStream({
       model,
       max_completion_tokens: 700,
       response_format: { type: "json_object" },
@@ -886,7 +992,6 @@ async function generateStructuredVideoScriptFromIncident(
         { role: "user", content: user },
       ],
     });
-    let raw = completion.choices?.[0]?.message?.content?.trim();
     if (!raw) return null;
     const jsonOnly = extractFirstJsonObject(raw) || raw;
     const parsed = JSON.parse(jsonOnly) as VideoScript;
@@ -935,8 +1040,8 @@ async function convertNarratedScriptTextToStructured(
 
     const user = ["Narrated script text:", content].join("\n\n");
 
-    const model = process.env.OPENAI_MODEL || "gpt-5-2025-08-07";
-    const completion = await openaiClient.chat.completions.create({
+    const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
+    let raw = await chatCompletionStream({
       model,
       max_completion_tokens: 800,
       response_format: { type: "json_object" },
@@ -945,7 +1050,6 @@ async function convertNarratedScriptTextToStructured(
         { role: "user", content: user },
       ],
     });
-    let raw = completion.choices?.[0]?.message?.content?.trim();
     if (!raw) return null;
     const jsonOnly = extractFirstJsonObject(raw) || raw;
     const parsed = JSON.parse(jsonOnly) as VideoScript;
