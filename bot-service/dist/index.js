@@ -18,7 +18,7 @@ dotenv_1.default.config();
 require("./ws");
 function main() {
     return __awaiter(this, void 0, void 0, function* () {
-        const meetingUrl = "https://meet.google.com/kzq-memj-oqv";
+        const meetingUrl = "https://meet.google.com/vwt-gqph-gms";
         const { botId } = yield (0, recall_1.startRecallBot)(meetingUrl);
         if (!botId) {
             console.log("❌ Failed to start bot");

@@ -4,14 +4,14 @@ dotenv.config();
 import "./ws";
 
 async function main() {
-  const meetingUrl = "https://meet.google.com/kzq-memj-oqv";
+  const meetingUrl = "https://meet.google.com/vwt-gqph-gms";
   const { botId } = await startRecallBot(meetingUrl);
   if (!botId) {
-    console.log("❌ Failed to start bot");
+    console.log(" Failed to start bot");
     return;
   }
   console.log(
-    "✅ WebSocket server is running and ready to receive transcripts..."
+    " WebSocket server is running and ready to receive transcripts..."
   );
   console.log("📡 Recall AI will send transcripts to our WebSocket server");
   console.log("📝 Transcripts will be processed by LLM automatically");

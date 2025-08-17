@@ -175,9 +175,6 @@ function normalizeUrlForCompare(url: string): string {
   }
 }
 
-/**
- * Poll Recall until the webpage output_media matches the expected URL (ignoring ts param).
- */
 export async function waitForScreenshareUrl(
   expectedUrl: string,
   timeoutMs: number = 8000,
@@ -275,7 +272,7 @@ export async function stopBotAudio(): Promise<boolean> {
     console.log("🔇 Stopping bot audio output...");
 
     // Import the textToSpeech function to generate silence
-    const { textToSpeech } = await import("./llm");
+    const { textToSpeech } = await import("./lib/tts");
 
     // Generate a very short silence by using a single character
     const silenceBuffer = await textToSpeech(".");
@@ -312,9 +309,6 @@ export async function stopBotAudio(): Promise<boolean> {
   }
 }
 
-/**
- * Get the current bot ID
- */
 export function getCurrentBotId(): string | null {
   return currentBotId;
 }

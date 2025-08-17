@@ -31,14 +31,10 @@ export type RecallConstants = {
   // automatic_video_output: { url: string };
 };
 
-// Base URL for the Vercel screenshare web app that renders different backgrounds
 export const SCREENSHARE_BASE_URL = "https://counter-ruby-phi.vercel.app";
-// If true, build URLs like https://app/#/datadog instead of https://app/datadog
-// This avoids server-side 404s on static deployments. Your web app must read location.hash.
 export const USE_HASH_ROUTES =
   (process.env.USE_HASH_ROUTES || "false").toLowerCase() === "true";
 
-// Append a unique cache-busting query param to force fresh loads on the bot's browser
 export const ENABLE_CACHE_BUST =
   (process.env.ENABLE_CACHE_BUST || "true").toLowerCase() === "true";
 
@@ -47,7 +43,6 @@ export const ENABLE_CACHE_BUST =
 export const USE_EMBEDDED_SCRIPT =
   (process.env.USE_EMBEDDED_SCRIPT || "false").toLowerCase() === "true";
 
-// Logical routes that the LLM can reference as background_url path tags
 export const BACKGROUND_ROUTES: Record<string, string> = {
   home: "/",
   github: "/github",
@@ -71,14 +66,12 @@ export function resolveBackgroundUrl(tagOrUrl: string): string {
   const input = String(tagOrUrl || "").trim();
   if (!input) return `${SCREENSHARE_BASE_URL}${BACKGROUND_ROUTES.home}`;
   if (input.startsWith("http://") || input.startsWith("https://")) return input;
-  // If path-like, use as-is; if alias-like, map to route
   let path = input;
   if (!input.startsWith("/")) {
     const alias = BACKGROUND_ROUTES[input.toLowerCase()];
     path = alias || BACKGROUND_ROUTES.home;
   }
   if (USE_HASH_ROUTES) {
-    // Normalize to /#/<route>
     const normalized = path.startsWith("/") ? path : `/${path}`;
     const url = `${SCREENSHARE_BASE_URL}/#${normalized}`;
     return ENABLE_CACHE_BUST
@@ -152,7 +145,6 @@ export const SCREEN_OCR_PHRASES = {
   stop: ["stop analyzing", "stop screen analysis", "you can stop now"],
 };
 
-// Voice/chat phrases to explicitly control when the bot is allowed to screenshare
 export const SCREENSHARE_PHRASES = {
   start: [
     "start screenshare",
@@ -176,7 +168,6 @@ export const SCREENSHARE_PHRASES = {
   ],
 };
 
-// Voice/chat phrases to toggle bot speaking (mute/unmute)
 export const MUTE_PHRASES = {
   start: [
     "mute",

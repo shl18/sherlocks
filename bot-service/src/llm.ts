@@ -1,42 +1,10 @@
-import { createClient } from "@deepgram/sdk";
 import OpenAI from "openai";
-import ffmpeg from "fluent-ffmpeg";
 import dotenv from "dotenv";
+import { BotState, ConversationContext, VideoScript } from "./utils/types";
 
 dotenv.config();
 
 const openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
-const deepgramClient = createClient(process.env.DEEPGRAM_API_KEY);
-
-interface ConversationContext {
-  recentIntents: string[];
-  lastResponseTime: number;
-}
-
-// ===== Video Script Types =====
-export type VideoScriptSegment = {
-  id: string;
-  start_ms: number; // inclusive
-  end_ms: number; // exclusive
-  background_url: string;
-  narration: string;
-};
-
-export type VideoScript = {
-  total_duration_ms: number;
-  segments: VideoScriptSegment[];
-};
-
-interface BotState {
-  isSpeaking: boolean;
-  currentSpeechId: string | null;
-  speechStartTime: number | null;
-  estimatedSpeechDuration: number | null;
-  speechQueue: string[];
-  isProcessing: boolean;
-  lastSpeechText: string | null;
-}
 
 const conversationContext: ConversationContext = {
   recentIntents: [],
@@ -56,9 +24,6 @@ const botState: BotState = {
 const MAX_INTENT_HISTORY = 5;
 const MIN_RESPONSE_INTERVAL = 2000;
 const SAME_INTENT_COOLDOWN = 6000;
-
-// Average speaking rate: ~150 words per minute (2.5 words per second)
-// Average word length: ~5 characters, so roughly 12.5 characters per second
 const CHARACTERS_PER_SECOND = 12.5;
 
 // -------- Streaming + rate-limit aware Chat Completions helper --------
@@ -196,6 +161,8 @@ function detectIntent(normalizedTranscript: string): string | null {
     "help me",
     "i need help",
     "can you help",
+    "how can u help me",
+    "how can you help me",
     "help with",
     "need assistance",
     "assist me",
@@ -370,9 +337,6 @@ export function startBotSpeaking(speechId: string, text: string): void {
   }, duration + 1000); // Add 1 second buffer
 }
 
-/**
- * Mark bot as stopped speaking
- */
 export function stopBotSpeaking(): void {
   if (botState.isSpeaking) {
     console.log(
@@ -399,16 +363,10 @@ export function clearSpeechQueue(): void {
   }
 }
 
-/**
- * Check if bot is currently processing a request
- */
 export function isBotProcessing(): boolean {
   return botState.isProcessing;
 }
 
-/**
- * Set bot processing state
- */
 export function setBotProcessing(processing: boolean): void {
   botState.isProcessing = processing;
   if (processing) {
@@ -418,9 +376,6 @@ export function setBotProcessing(processing: boolean): void {
   }
 }
 
-/**
- * Handle interruption when user speaks while bot is talking
- */
 export function handleInterruption(newTranscript: string): boolean {
   if (isBotSpeaking() || isBotProcessing()) {
     console.log(`🚫 INTERRUPTION DETECTED! User said: "${newTranscript}"`);
@@ -462,71 +417,12 @@ export function getRemainingSpeechDuration(): number {
   return remaining;
 }
 
-/**
- * Force reset all bot states (for external interruption handling)
- */
 export function forceResetBotState(): void {
   console.log("🔄 Force resetting all bot states");
   stopBotSpeaking();
   clearSpeechQueue();
   setBotProcessing(false);
 }
-
-// export async function askDummyLLM(
-//   transcript: string,
-//   wasInterrupted: boolean = false
-// ): Promise<string | null> {
-//   const normalizedTranscript = transcript.toLowerCase().trim();
-//   console.log("🎧 Processing transcript:", transcript);
-
-//   if (wasInterrupted) {
-//     console.log("🚫 Processing interrupted transcript - bypassing cooldowns");
-//   }
-
-//   const intent = detectIntent(normalizedTranscript);
-
-//   if (!intent) {
-//     console.log("No intent detected for this transcript");
-//     return null;
-//   }
-
-//   console.log("Detected intent:", intent);
-
-//   // Skip cooldown checks if this was an interruption
-//   if (!wasInterrupted && !shouldRespond(intent)) {
-//     return null;
-//   }
-
-//   let reply: string | null = null;
-
-//   switch (intent) {
-//     case "greeting":
-//       // Big reply
-//       reply =
-//         "Hello there! It’s an absolute pleasure to meet you today. My name is Sherlocks — your friendly, ever-curious, and always-ready AI assistant. Think of me as your knowledgeable companion, your brainstorming buddy, and your tireless problem-solver, all wrapped into one.  I hope your day has been nothing short of amazing so far, and if it hasn’t, well… maybe I can help turn it around. Whether you’re here to explore ideas, unravel mysteries, learn something new, get help with a tricky problem, or simply enjoy a good conversation, I’m ready and eager to dive right in with you. \n\n From answering your questions with precision and clarity, to offering a spark of inspiration when you need it most, my goal is simple: to make your life easier, brighter, and a little more interesting every time we interact.";
-//       break;
-//     case "identity":
-//       // Medium reply
-//       reply =
-//         "I'm Sherlocks, an AI bot designed to help you with various questions and tasks. I can assist with information, have conversations, and try to be helpful in whatever way you need.";
-//       break;
-//     case "short":
-//       // Small reply
-//       reply = "Got it!";
-//       break;
-//     default:
-//       console.log("No response defined for intent:", intent);
-//       return null;
-//   }
-
-//   if (reply) {
-//     updateConversationContext(intent);
-//     console.log("LLM Response:", reply);
-//     return reply;
-//   }
-
-//   return null;
-// }
 
 export async function askLLM(
   transcript: string,
@@ -677,6 +573,161 @@ export function shouldGenerateVideoScript(text: string): boolean {
     "latency",
     "p95",
     "active state",
+    "video script",
+    "alert",
+    "rca",
+    "critical",
+    "5xx",
+    "runbook",
+    "datadog",
+    "kubectl",
+    "pod ",
+    "pods ",
+    "deployment",
+    "commit",
+    "jenkins",
+    "load average",
+    "rds",
+    "postgresql",
+    "replica",
+    "environment",
+    "investigation summary",
+    "recommended actions",
+    "postgres",
+    "database",
+    "pg_stat_activity",
+    "slow query",
+    "query execution",
+    "max_connections",
+    "latency",
+    "p95",
+    "active state",
+
+    // Monitoring / Alerting
+    "high error rate",
+    "spike in errors",
+    "http 500",
+    "http 502",
+    "http 503",
+    "alert triggered",
+    "firing alert",
+    "service degraded",
+    "health check failed",
+    "status check failed",
+    "synthetic check",
+    "heartbeat missed",
+    "threshold breach",
+    "latency alert",
+    "cpu alert",
+    "memory alert",
+    "disk alert",
+    "incident detected",
+    "alert resolved",
+
+    // Kubernetes / Containers
+    "container restart",
+    "container crash",
+    "init container",
+    "pod restart",
+    "pod pending",
+    "pod crash",
+    "pod not scheduled",
+    "pod stuck",
+    "imagepullbackoff",
+    "backoff restarting failed container",
+    "deployment unavailable",
+    "replicas unavailable",
+    "replicas exceeded",
+    "job failed",
+    "cronjob failed",
+    "statefulset",
+    "daemonset",
+    "namespace",
+    "service account",
+
+    // Infra / Cloud
+    "aws",
+    "gcp",
+    "azure",
+    "lambda",
+    "fargate",
+    "ecs",
+    "eks",
+    "gke",
+    "aks",
+    "iam",
+    "cloudwatch",
+    "cloudtrail",
+    "route53",
+    "load balancer unhealthy",
+    "elb",
+    "alb",
+    "network partition",
+    "dns failure",
+    "dns outage",
+    "subnet exhaustion",
+    "ip exhaustion",
+    "out of capacity",
+
+    // Application / CI/CD
+    "build error",
+    "build timeout",
+    "pipeline error",
+    "pipeline failed",
+    "deployment error",
+    "rollback triggered",
+    "feature toggle",
+    "flag misconfigured",
+    "merge conflict",
+    "commit reverted",
+    "release blocked",
+    "staging outage",
+    "production outage",
+    "blue-green deploy",
+    "canary deploy",
+    "hotfix deploy",
+    "release rollback",
+
+    // Database / Storage
+    "postgres crash",
+    "mysql crash",
+    "redis down",
+    "cache miss storm",
+    "replica lag",
+    "replication stopped",
+    "primary failover",
+    "connection refused",
+    "too many connections",
+    "max_connections reached",
+    "deadlock detected",
+    "table locked",
+    "slow transaction",
+    "disk corruption",
+    "storage corruption",
+    "volume full",
+    "out of space",
+    "io timeout",
+    "checkpoint timeout",
+
+    // Security / Networking
+    "unauthorized",
+    "forbidden",
+    "tls handshake failed",
+    "certificate expired",
+    "invalid certificate",
+    "denied request",
+    "rate limit exceeded",
+    "ddos",
+    "spike in traffic",
+    "unexpected traffic",
+    "firewall rule",
+    "vpn down",
+    "unauthenticated",
+    "access denied",
+    "invalid credentials",
+    "token expired",
+    "secrets leaked",
+    "vault",
   ];
   return markers.some((m) => t.includes(m));
 }
@@ -822,10 +873,16 @@ export async function generateRootCauseParagraph(
     if (!prompt) return null;
 
     const system = [
+      // "You are Sherlocks, an SRE root-cause summarizer.",
+      // "Given alert text and notes, produce ONE concise paragraph (3-5 sentences)",
+      // "with likely root cause, impacted components, and immediate mitigation.",
+      // "Avoid bullet points. Keep under 80 words.",
       "You are Sherlocks, an SRE root-cause summarizer.",
-      "Given alert text and notes, produce ONE concise paragraph (2-4 sentences)",
-      "with likely root cause, impacted components, and immediate mitigation.",
-      "Avoid bullet points. Keep under 80 words.",
+      "Input: raw incident/alert text and notes.",
+      "Output: ONE concise paragraph (3-5 sentences, under 100-120 words).",
+      "Include: likely root cause, impacted components, and immediate mitigation.",
+      "Be factual and assertive; avoid vague hedging.",
+      "No bullet points, no extra commentary.",
     ].join("\n");
 
     const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
@@ -1164,129 +1221,4 @@ export async function summarizeFromImageBase64(
     console.error("❌ summarizeFromImageBase64 error:", error);
     return null;
   }
-}
-
-/**
- * Convert text to speech using Deepgram TTS API and convert to MP3
- * @param text - The text to convert to speech
- * @returns MP3 audio buffer containing the generated speech
- */
-export async function textToSpeech(text: string): Promise<Buffer | null> {
-  try {
-    console.log("🔊 Converting text to speech:", text);
-
-    // Make TTS request to Deepgram (generate WAV)
-    const response = await deepgramClient.speak.request(
-      { text },
-      {
-        model: "aura-2-hermes-en",
-        encoding: "linear16",
-        container: "wav",
-        sample_rate: 16000,
-      }
-    );
-
-    const stream = await response.getStream();
-
-    if (stream) {
-      const wavBuffer = await getAudioBuffer(stream);
-      const mp3Buffer = await convertWavToMp3(wavBuffer);
-      if (mp3Buffer) {
-        return mp3Buffer;
-      } else {
-        console.error("Failed to convert WAV to MP3");
-        return null;
-      }
-    } else {
-      console.error(" Failed to get audio stream from Deepgram TTS");
-      return null;
-    }
-  } catch (error) {
-    console.error("Text-to-speech error:", error);
-    return null;
-  }
-}
-
-/**
- * Helper function to convert stream to audio buffer
- */
-async function getAudioBuffer(
-  response: ReadableStream<Uint8Array>
-): Promise<Buffer> {
-  const reader = response.getReader();
-  const chunks: Uint8Array[] = [];
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    chunks.push(value);
-  }
-
-  const dataArray = chunks.reduce(
-    (acc, chunk) => Uint8Array.from([...acc, ...chunk]),
-    new Uint8Array(0)
-  );
-
-  return Buffer.from(dataArray.buffer);
-}
-
-/**
- * Convert WAV buffer to MP3 buffer using streaming ffmpeg (much faster - no temp files!)
- * @param wavBuffer - The WAV audio buffer to convert
- * @returns MP3 audio buffer
- */
-async function convertWavToMp3(wavBuffer: Buffer): Promise<Buffer | null> {
-  return new Promise((resolve) => {
-    try {
-      console.log("🎵 Starting streaming WAV→MP3 conversion...");
-      const startTime = Date.now();
-
-      const mp3Chunks: Buffer[] = [];
-      const { Readable, PassThrough } = require("stream");
-
-      const inputStream = new Readable();
-      inputStream.push(wavBuffer);
-      inputStream.push(null);
-
-      const outputStream = new PassThrough();
-
-      const command = ffmpeg(inputStream)
-        .inputFormat("wav")
-        .audioCodec("libmp3lame")
-        .audioBitrate(64)
-        .audioFrequency(16000)
-        .format("mp3")
-        .on("start", (commandLine) => {
-          console.log(
-            "🔄 FFmpeg streaming command:",
-            commandLine.substring(0, 100) + "..."
-          );
-        })
-        .on("end", () => {
-          const duration = Date.now() - startTime;
-          console.log(`✅ Streaming conversion complete in ${duration}ms`);
-
-          const finalMp3Buffer = Buffer.concat(mp3Chunks);
-          console.log(`🎵 MP3 buffer size: ${finalMp3Buffer.length} bytes`);
-          resolve(finalMp3Buffer);
-        })
-        .on("error", (error) => {
-          console.error("❌ Streaming FFmpeg error:", error);
-          resolve(null);
-        });
-      outputStream.on("data", (chunk: Buffer) => {
-        mp3Chunks.push(chunk);
-      });
-
-      outputStream.on("error", (error: any) => {
-        console.error("❌ Output stream error:", error);
-        resolve(null);
-      });
-
-      command.pipe(outputStream, { end: true });
-    } catch (error) {
-      console.error("❌ Streaming conversion setup error:", error);
-      resolve(null);
-    }
-  });
 }

@@ -4,7 +4,6 @@ import * as path from "path";
 import {
   askLLM,
   askLLMWithRetries,
-  textToSpeech,
   handleInterruption,
   startBotSpeaking,
   setBotProcessing,
@@ -18,7 +17,6 @@ import {
   generateShortAckResponse,
   generatePoliteClosingResponse,
   runIncidentVideoScriptPipeline,
-  VideoScript,
   summarizeFromImageBase64,
 } from "./llm";
 import {
@@ -37,123 +35,13 @@ import {
   MUTE_PHRASES,
 } from "./constants";
 import { switchScreenshare } from "./recall";
-
-type TranscriptDataEvent = {
-  event: "transcript.data";
-  data: {
-    data: {
-      words: Array<{
-        text: string;
-        start_timestamp: {
-          relative: number;
-          absolute: string;
-        };
-        end_timestamp: {
-          relative: number;
-          absolute: string;
-        };
-      }>;
-      participant: {
-        id: number;
-        name: string;
-        is_host: boolean;
-        platform: string;
-        extra_data?: any;
-      };
-    };
-    transcript: {
-      id: string;
-      metadata: any;
-    };
-    realtime_endpoint: {
-      id: string;
-      metadata: any;
-    };
-    recording: {
-      id: string;
-      metadata: any;
-    };
-    bot: {
-      id: string;
-      metadata: any;
-    };
-  };
-};
-
-type ChatMessageEvent = {
-  event: "participant_events.chat_message";
-  data: {
-    data: {
-      participant: {
-        name: string;
-        is_host: boolean;
-        platform: string;
-        extra_data?: any;
-      };
-      timestamp: {
-        relative: number;
-        absolute: string;
-      };
-      data: {
-        text: string;
-        to: string;
-      };
-    };
-    participant_events: {
-      id: string;
-      metadata: any;
-    };
-    realtime_endpoint: {
-      id: string;
-      metadata: any;
-    };
-    recording: {
-      id: string;
-      metadata: any;
-    };
-    bot: {
-      id: string;
-      metadata: any;
-    };
-  };
-};
-
-type VideoSeparatePngEvent = {
-  event: "video_separate_png.data";
-  data: {
-    data: {
-      buffer: string; // base64 encoded png at 2fps with resolution 360x640
-      timestamp: {
-        relative: number;
-        absolute: string;
-      };
-      type: "webcam" | "screenshare";
-      participant: {
-        id: number;
-        name: string | null;
-        is_host: boolean;
-        platform: string | null;
-        extra_data: object;
-      };
-    };
-    realtime_endpoint: {
-      id: string;
-      metadata: object;
-    };
-    video_separate: {
-      id: string;
-      metadata: object;
-    };
-    recording: {
-      id: string;
-      metadata: object;
-    };
-    bot: {
-      id: string;
-      metadata: object;
-    };
-  };
-};
+import { textToSpeech } from "./lib/tts";
+import {
+  ChatMessageEvent,
+  TranscriptDataEvent,
+  VideoScript,
+  VideoSeparatePngEvent,
+} from "./utils/types";
 
 type WebSocketEvent =
   | TranscriptDataEvent
