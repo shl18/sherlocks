@@ -271,10 +271,8 @@ export async function stopBotAudio(): Promise<boolean> {
   try {
     console.log("🔇 Stopping bot audio output...");
 
-    // Import the textToSpeech function to generate silence
-    const { textToSpeech } = await import("./lib/tts");
+    const { textToSpeech } = await import("./integrations/hume/tts");
 
-    // Generate a very short silence by using a single character
     const silenceBuffer = await textToSpeech(".");
 
     if (!silenceBuffer) {

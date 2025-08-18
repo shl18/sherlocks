@@ -84,7 +84,7 @@ export function resolveBackgroundUrl(tagOrUrl: string): string {
     : url;
 }
 
-// Build a small script payload that the webpage can execute to change views client-side
+//  a small script payload that the webpage can execute to change views client-side
 export type EmbeddedFrame = { start_ms: number; end_ms: number; view: string };
 export type EmbeddedScriptPayload = { frames: EmbeddedFrame[] };
 

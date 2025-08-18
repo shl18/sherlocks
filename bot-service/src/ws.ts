@@ -86,13 +86,11 @@ function sleep(ms: number): Promise<void> {
 }
 
 function splitIntoChunks(text: string): string[] {
-  const maxLen = 140; // keep chunks short for fast latency
-  // First split by sentence boundaries
+  const maxLen = 140;
   const sentences = text
     .split(/([.!?]+\s+)/)
     .reduce<string[]>((acc, part, idx, arr) => {
       if (part.trim().length === 0) return acc;
-      // Merge text with its following punctuation token
       if (idx < arr.length - 1 && /[.!?]+\s+/.test(arr[idx + 1] || "")) {
         acc.push((part + (arr[idx + 1] || "")).trim());
         arr[idx + 1] = ""; // consume the punctuation token
@@ -136,10 +134,7 @@ async function speakInChunks(
   generationId: string,
   source: "transcript" | "chat"
 ): Promise<void> {
-  // Smaller max chunk size is handled by splitIntoChunks
   const chunks = splitIntoChunks(reply);
-
-  // Prefetch pipeline: keep one chunk ahead
   let nextBufferPromise: Promise<Buffer | null> | null = null;
 
   for (let i = 0; i < chunks.length; i += 1) {
@@ -150,12 +145,10 @@ async function speakInChunks(
 
     const chunk = chunks[i];
 
-    // Kick off prefetch for current chunk if not already
     if (!nextBufferPromise) {
       nextBufferPromise = textToSpeech(chunk);
     }
 
-    // Wait for current chunk buffer
     const audioBuffer = await nextBufferPromise;
 
     if (hasGenerationBeenCancelled(generationId)) {
@@ -165,19 +158,14 @@ async function speakInChunks(
 
     if (!audioBuffer) {
       console.log("❌ Failed to convert chunk to speech, skipping chunk");
-      // Prepare next prefetch if any
       const nextChunk = chunks[i + 1];
       nextBufferPromise = nextChunk ? textToSpeech(nextChunk) : null;
       continue;
     }
 
-    // Prefetch the next chunk now (overlap generation with current playback)
     const nextChunk = chunks[i + 1];
     nextBufferPromise = nextChunk ? textToSpeech(nextChunk) : null;
 
-    // Do not stop audio between chunks; only stop on cancellation/interruption
-
-    // Send the audio chunk
     const speechId = `speech_${Date.now()}_${Math.random()
       .toString(36)
       .substr(2, 9)}`;
@@ -187,13 +175,11 @@ async function speakInChunks(
       break; // stop to avoid piling up
     }
 
-    // Mark speaking and estimate duration for pacing (minimal buffer)
     startBotSpeaking(speechId, chunk);
     isAudioPlaying = true;
     currentAudioId = speechId;
     const estimatedMs = Math.max(450, estimateDurationMs(chunk) + 50); // smaller buffer
 
-    // Wait in small slices so we can react to cancellation quickly
     let remaining = estimatedMs;
     while (remaining > 0) {
       if (hasGenerationBeenCancelled(generationId)) {
@@ -245,7 +231,6 @@ async function speakExclusively(
 ): Promise<void> {
   await withAudioLock(async () => {
     const generationId = newTtsGenerationId();
-    // Best-effort stop any residual audio before new playback
     await stopBotAudio();
     await sleep(80);
     await speakInChunks(reply, generationId, source);
@@ -253,11 +238,10 @@ async function speakExclusively(
 }
 
 // ===== Video Script Playback =====
-// Serialize screenshare switches to avoid overlapping DELETE/POST calls
 let screenshareSwitchChain: Promise<void> = Promise.resolve();
-let isScreenshareAllowed = false; // Only switch screens when explicitly enabled by user
-let isVideoScriptPlaying = false; // Block OCR-driven interruptions during script playback
-let isMuted = false; // When true, bot will not speak responses
+let isScreenshareAllowed = false;
+let isVideoScriptPlaying = false;
+let isMuted = false;
 
 function queueScreenshareSwitch(url: string): Promise<void> {
   screenshareSwitchChain = screenshareSwitchChain.then(async () => {
@@ -269,13 +253,11 @@ function queueScreenshareSwitch(url: string): Promise<void> {
         return;
       }
       await switchScreenshare(url);
-      // Wait until Recall confirms the webpage is set, or time out gracefully
       const ok = await waitForScreenshareUrl(url, 8000, 400);
       if (!ok) {
         console.warn(
           "⚠️ Screenshare URL did not confirm in time; proceeding anyway"
         );
-        // Fallback delay to give Meet a chance to render
         await sleep(1200);
       }
     } catch (e) {
@@ -288,13 +270,11 @@ function queueScreenshareSwitch(url: string): Promise<void> {
 async function playVideoScript(script: VideoScript): Promise<void> {
   isVideoScriptPlaying = true;
   try {
-    // Ensure screenshare switches are allowed during a video script
     if (!isScreenshareAllowed) {
       console.log("🟢 Enabling screenshare for video script playback");
       isScreenshareAllowed = true;
     }
 
-    // If enabled, start a single-stream screenshare with embedded script instructions
     if (USE_EMBEDDED_SCRIPT) {
       try {
         const url = buildScreenshareUrlWithScript(script as any);
@@ -432,11 +412,9 @@ async function maybeStopEverything(triggerText: string): Promise<boolean> {
 
   console.log("🧹 Stop-all command detected. Stopping all activities...");
   try {
-    // Immediately stop any audio playback and cancel queued chunks
     await stopBotAudio();
     cancelCurrentTtsGeneration();
 
-    // Stop video script playback and prevent further screen switches
     isVideoScriptPlaying = false;
     isScreenshareAllowed = false;
     try {
@@ -445,11 +423,9 @@ async function maybeStopEverything(triggerText: string): Promise<boolean> {
       console.warn("⚠️ stopScreenshare failed (proceeding):", e);
     }
 
-    // Stop screen OCR session
     isScreenOcrActive = false;
     screenOcrSessionEndsAt = 0;
 
-    // Reset bot state and processing locks
     forceResetBotState();
     setBotProcessing(false);
     isCurrentlyProcessing = false;
