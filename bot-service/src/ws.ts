@@ -35,7 +35,7 @@ import {
   MUTE_PHRASES,
 } from "./constants";
 import { switchScreenshare } from "./recall";
-import { textToSpeech } from "./lib/tts";
+import { textToSpeech } from "./integrations/eleven/tts";
 import {
   ChatMessageEvent,
   TranscriptDataEvent,
@@ -398,6 +398,70 @@ function maybeToggleMute(triggerText: string): string | null {
   return null;
 }
 
+// ===== Global STOP-ALL handler (e.g., "thanks, I got it") =====
+const STOP_ALL_PHRASES = [
+  // Polite closings / confirmations
+  "thank you",
+  "thank u",
+  "thanks",
+  "thanks sherl",
+  "thanks sherlocks",
+  "thank you sherlocks",
+  "i got it",
+  "got it",
+  "all good",
+  "that's all",
+  "thats all",
+  "that's it",
+  "thats it",
+  "we are done",
+  "we're done",
+  "no further help",
+  "you can stop",
+  "stop now",
+  "you can leave",
+  "you may leave",
+  "bye",
+  "goodbye",
+];
+
+async function maybeStopEverything(triggerText: string): Promise<boolean> {
+  const t = (triggerText || "").toLowerCase();
+  const shouldStop = STOP_ALL_PHRASES.some((p) => t.includes(p));
+  if (!shouldStop) return false;
+
+  console.log("🧹 Stop-all command detected. Stopping all activities...");
+  try {
+    // Immediately stop any audio playback and cancel queued chunks
+    await stopBotAudio();
+    cancelCurrentTtsGeneration();
+
+    // Stop video script playback and prevent further screen switches
+    isVideoScriptPlaying = false;
+    isScreenshareAllowed = false;
+    try {
+      await stopScreenshare();
+    } catch (e) {
+      console.warn("⚠️ stopScreenshare failed (proceeding):", e);
+    }
+
+    // Stop screen OCR session
+    isScreenOcrActive = false;
+    screenOcrSessionEndsAt = 0;
+
+    // Reset bot state and processing locks
+    forceResetBotState();
+    setBotProcessing(false);
+    isCurrentlyProcessing = false;
+    currentProcessingId = null;
+
+    console.log("✅ All activities stopped on user request.");
+  } catch (e) {
+    console.error("❌ Error during stop-all handling:", e);
+  }
+  return true;
+}
+
 async function processTextWithLLM(
   text: string,
   source: "transcript" | "chat"
@@ -561,6 +625,10 @@ wss.on("connection", (ws) => {
 
         // Process the transcript if we have text
         if (transcriptText?.trim()) {
+          // Global stop-all preemption
+          if (await maybeStopEverything(transcriptText)) {
+            return;
+          }
           // Try toggling OCR session and screenshare permission from transcript commands
           const ocrResponse = maybeStartScreenOcrSession(transcriptText);
           const shareResponse =
@@ -602,6 +670,10 @@ wss.on("connection", (ws) => {
 
         // Process the chat message if we have text
         if (chatData.text?.trim()) {
+          // Global stop-all preemption
+          if (await maybeStopEverything(chatData.text)) {
+            return;
+          }
           // Try toggling OCR session and screenshare permission from chat commands
           const ocrResponse = maybeStartScreenOcrSession(chatData.text);
           const shareResponse = maybeToggleScreensharePermission(chatData.text);

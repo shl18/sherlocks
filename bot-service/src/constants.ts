@@ -216,7 +216,7 @@ export const BOT_CONFIG = (meetingUrl: string): RecallConstants => ({
     realtime_endpoints: [
       {
         type: "websocket",
-        url: "wss://13798a9d8d7c.ngrok-free.app",
+        url: "wss://7dc1b1176697.ngrok-free.app",
         events: [
           "transcript.data",
           "participant_events.chat_message",

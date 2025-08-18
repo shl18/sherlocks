@@ -104,6 +104,41 @@ function extractFirstJsonObject(
   return null;
 }
 
+// -------- Strict JSON Schema for VideoScript --------
+const videoScriptJsonSchema: any = {
+  name: "VideoScript",
+  strict: true,
+  schema: {
+    type: "object",
+    additionalProperties: false,
+    required: ["total_duration_ms", "segments"],
+    properties: {
+      total_duration_ms: { type: "number", minimum: 0 },
+      segments: {
+        type: "array",
+        minItems: 4,
+        maxItems: 9,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["id", "start_ms", "end_ms", "background_url", "narration"],
+          properties: {
+            id: { type: "string", minLength: 1 },
+            start_ms: { type: "number", minimum: 0 },
+            end_ms: { type: "number", exclusiveMinimum: 0 },
+            background_url: {
+              type: "string",
+              pattern:
+                "^/(github|jenkins|datadog|kubernetes|rds|redis|)$|^https://[A-Za-z0-9._~:/?#[@!$&'()*+,;=%-]+$",
+            },
+            narration: { type: "string", minLength: 10 },
+          },
+        },
+      },
+    },
+  },
+};
+
 // Detects a structured RCA write-up with common section headings
 function isStructuredRcaText(text: string): boolean {
   const t = (text || "").toLowerCase();
@@ -960,19 +995,30 @@ export async function generateStructuredVideoScript(
     ].join("\n");
 
     const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
-    let raw = await chatCompletionStream({
+    // Prefer non-streaming strict schema to guarantee valid JSON
+    const completion = await openaiClient.chat.completions.create({
       model,
       max_completion_tokens: 500,
-      response_format: { type: "json_object" },
+      response_format: {
+        type: "json_schema",
+        json_schema: videoScriptJsonSchema,
+      },
       messages: [
         { role: "system", content: system },
         { role: "user", content: user },
       ],
-    });
+    } as any);
+    let raw = completion.choices?.[0]?.message?.content || null;
     if (!raw) return null;
-    // Some models may prepend/append text; try to extract JSON
-    const jsonOnly = extractFirstJsonObject(raw) || raw;
-    const parsed = JSON.parse(jsonOnly) as VideoScript;
+    let parsed: VideoScript;
+    try {
+      parsed = JSON.parse(raw) as VideoScript;
+    } catch (e) {
+      // Fallback: try to extract the first JSON object
+      const jsonOnly = extractFirstJsonObject(raw);
+      if (!jsonOnly) throw e;
+      parsed = JSON.parse(jsonOnly) as VideoScript;
+    }
 
     // Basic validation
     if (
@@ -1040,18 +1086,28 @@ async function generateStructuredVideoScriptFromIncident(
     ].join("\n");
 
     const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
-    let raw = await chatCompletionStream({
+    const completion = await openaiClient.chat.completions.create({
       model,
       max_completion_tokens: 700,
-      response_format: { type: "json_object" },
+      response_format: {
+        type: "json_schema",
+        json_schema: videoScriptJsonSchema,
+      },
       messages: [
         { role: "system", content: system },
         { role: "user", content: user },
       ],
-    });
+    } as any);
+    let raw = completion.choices?.[0]?.message?.content || null;
     if (!raw) return null;
-    const jsonOnly = extractFirstJsonObject(raw) || raw;
-    const parsed = JSON.parse(jsonOnly) as VideoScript;
+    let parsed: VideoScript;
+    try {
+      parsed = JSON.parse(raw) as VideoScript;
+    } catch (e) {
+      const jsonOnly = extractFirstJsonObject(raw);
+      if (!jsonOnly) throw e;
+      parsed = JSON.parse(jsonOnly) as VideoScript;
+    }
     if (
       !parsed?.segments?.length ||
       typeof parsed.total_duration_ms !== "number"
@@ -1098,18 +1154,28 @@ async function convertNarratedScriptTextToStructured(
     const user = ["Narrated script text:", content].join("\n\n");
 
     const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
-    let raw = await chatCompletionStream({
+    const completion = await openaiClient.chat.completions.create({
       model,
       max_completion_tokens: 800,
-      response_format: { type: "json_object" },
+      response_format: {
+        type: "json_schema",
+        json_schema: videoScriptJsonSchema,
+      },
       messages: [
         { role: "system", content: system },
         { role: "user", content: user },
       ],
-    });
+    } as any);
+    let raw = completion.choices?.[0]?.message?.content || null;
     if (!raw) return null;
-    const jsonOnly = extractFirstJsonObject(raw) || raw;
-    const parsed = JSON.parse(jsonOnly) as VideoScript;
+    let parsed: VideoScript;
+    try {
+      parsed = JSON.parse(raw) as VideoScript;
+    } catch (e) {
+      const jsonOnly = extractFirstJsonObject(raw);
+      if (!jsonOnly) throw e;
+      parsed = JSON.parse(jsonOnly) as VideoScript;
+    }
     if (
       !parsed?.segments?.length ||
       typeof parsed.total_duration_ms !== "number"
